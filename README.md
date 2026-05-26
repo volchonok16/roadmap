@@ -8,14 +8,10 @@
 2. Запустите:
 
 ```bash
-docker compose up --build
-```
-
-Локальный доступ к Postgres на порту 5432 (опционально):
-
-```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
+
+Без `-f docker-compose.dev.yml` сервисы доступны только внутри сети Docker (для VPS используйте `docker-compose.prod.yml`).
 
 Frontend: http://localhost:5173  
 Backend: http://localhost:8000/api/health

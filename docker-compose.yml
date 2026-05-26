@@ -37,8 +37,7 @@ services:
       CHANGE_REQUEST_STATES: ${CHANGE_REQUEST_STATES:-Express Analysis,Analysis Backlog,Analysis,Development,UAT,Pilot,Closed}
       TFS_START_DATE_FIELDS: ${TFS_START_DATE_FIELDS:-Microsoft.VSTS.Scheduling.StartDate,System.CreatedDate}
       TFS_TARGET_DATE_FIELDS: ${TFS_TARGET_DATE_FIELDS:-Microsoft.VSTS.Scheduling.TargetDate,Microsoft.VSTS.Scheduling.FinishDate}
-    ports:
-      - "8000:8000"
+    # Порты на хост: docker-compose.dev.yml (локально) или docker-compose.prod.yml (VPS)
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,8 +47,6 @@ services:
       context: ./frontend
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-    ports:
-      - "5173:5173"
     depends_on:
       - backend
 

@@ -163,6 +163,10 @@ sudo ufw enable
 
 Порты `5173` и `8000` на хосте — только `127.0.0.1` (nginx). Postgres снаружи не публикуется.
 
+### Ошибка `failed to bind host port 127.0.0.1:8000: address already in use` (lsof пустой)
+
+Часто из‑за **двойного** проброса порта: в `docker-compose.yml` было `8000:8000`, в prod — `127.0.0.1:8000:8000`, Compose **склеивает** оба. Обновите репозиторий (`git pull`) — в базовом файле портов на хост нет, только в prod.
+
 ### Ошибка `failed to bind host port 127.0.0.1:5432: address already in use`
 
 На VPS уже занят 5432 (часто системный `postgresql`). В `docker-compose.prod.yml` порт БД на хост не пробрасывается — обновите репозиторий и перезапустите:
