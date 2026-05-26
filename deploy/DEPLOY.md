@@ -4,7 +4,7 @@
 |--------|--------|---------------------|
 | Frontend | https://pallink.fun | `127.0.0.1:5173` |
 | API | https://api.pallink.fun | `127.0.0.1:8000` |
-| Postgres | только внутри Docker | `127.0.0.1:5432` |
+| Postgres | только внутри Docker | порт на хост **не** пробрасывается |
 
 ## 1. DNS (ваши записи)
 
@@ -161,7 +161,19 @@ sudo ufw allow 'Nginx Full'
 sudo ufw enable
 ```
 
-Порты `5173`, `8000`, `5432` снаружи не открывайте — только через nginx на 80/443.
+Порты `5173` и `8000` на хосте — только `127.0.0.1` (nginx). Postgres снаружи не публикуется.
+
+### Ошибка `failed to bind host port 127.0.0.1:5432: address already in use`
+
+На VPS уже занят 5432 (часто системный `postgresql`). В `docker-compose.prod.yml` порт БД на хост не пробрасывается — обновите репозиторий и перезапустите:
+
+```bash
+cd /var/www/roadmap && git pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Либо остановите системный Postgres: `sudo systemctl stop postgresql`.
 
 ## 6. Переменные приложения
 
