@@ -5,8 +5,6 @@ services:
       POSTGRES_DB: roadmap
       POSTGRES_USER: roadmap
       POSTGRES_PASSWORD: roadmap
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -14,6 +12,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Порт на хост только для локальной отладки: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
   backend:
     build:

@@ -11,6 +11,12 @@
 docker compose up --build
 ```
 
+Локальный доступ к Postgres на порту 5432 (опционально):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
 Frontend: http://localhost:5173  
 Backend: http://localhost:8000/api/health
 

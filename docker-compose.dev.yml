@@ -1,0 +1,8 @@
+# Локальная отладка: Postgres на localhost:5432 (не использовать на VPS).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"

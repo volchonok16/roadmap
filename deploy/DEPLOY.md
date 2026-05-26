@@ -173,6 +173,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
+Не используйте `ports: !reset` в prod — ломает merge. Postgres в базовом `docker-compose.yml` без порта на хост.
+```
+
 Либо остановите системный Postgres: `sudo systemctl stop postgresql`.
 
 ## 6. Переменные приложения
