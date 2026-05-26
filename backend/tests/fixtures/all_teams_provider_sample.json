@@ -1,0 +1,10 @@
+{
+  "data": {
+    "ms.vss-work-web.all-teams-artifact-picker-data-provider": {
+      "teams": [
+        {"id": "35f716ec-ed6c-4d13-afe2-e35d9ffa3c59", "name": "Digital Inbox"},
+        {"id": "8e116105-20ad-431b-8482-bf5ee44dce64", "name": "DS"}
+      ]
+    }
+  }
+}

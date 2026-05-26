@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>TFS Roadmap</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 14px;
+        width: 280px;
+        color: #172033;
+      }
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #00dfcf, #2ce9b8);
+        color: #063534;
+        font-weight: 800;
+        padding: 12px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      p {
+        font-size: 12px;
+        color: #5f6d84;
+        line-height: 1.45;
+      }
+      .status {
+        margin-top: 10px;
+        font-size: 12px;
+      }
+      .error {
+        color: #b42318;
+      }
+      .ok {
+        color: #0b6e63;
+      }
+    </style>
+  </head>
+  <body>
+    <p>
+      Использует cookie вашей <strong>уже открытой</strong> сессии на tfs.t2.ru (включая HttpOnly для SSO).
+    </p>
+    <button id="connect" type="button">Подключить к Roadmap</button>
+    <p id="status" class="status"></p>
+    <script src="popup.js"></script>
+  </body>
+</html>

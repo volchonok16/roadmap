@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: roadmap
+      POSTGRES_USER: roadmap
+      POSTGRES_PASSWORD: roadmap
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roadmap -d roadmap"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://roadmap:roadmap@postgres:5432/roadmap
+      TFS_BASE_URL: ${TFS_BASE_URL:-https://tfs.t2.ru/tfs/Main}
+      TFS_PROJECT: ${TFS_PROJECT:-Tele2}
+      TFS_PROJECT_ID: ${TFS_PROJECT_ID:-c56fb5fe-9752-462a-82ae-0b9e10364510}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:5173}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8000}
+      TFS_VERIFY_TLS: ${TFS_VERIFY_TLS:-true}
+      TFS_BATCH_SIZE: ${TFS_BATCH_SIZE:-100}
+      TFS_REQUEST_DELAY_SECONDS: ${TFS_REQUEST_DELAY_SECONDS:-0.2}
+      TFS_TIMEOUT_SECONDS: ${TFS_TIMEOUT_SECONDS:-45}
+      TFS_API_VERSION: ${TFS_API_VERSION:-6.1}
+      TFS_FETCH_ALL_FIELDS: ${TFS_FETCH_ALL_FIELDS:-true}
+      TFS_FETCH_COMPACT_DETAILS: ${TFS_FETCH_COMPACT_DETAILS:-false}
+      TFS_WIQL_MAX_RESULTS: ${TFS_WIQL_MAX_RESULTS:-15000}
+      TFS_COMPACT_CONCURRENCY: ${TFS_COMPACT_CONCURRENCY:-4}
+      SYNC_BUTTON_COOLDOWN_SECONDS: ${SYNC_BUTTON_COOLDOWN_SECONDS:-30}
+      CHANGE_REQUEST_STATES: ${CHANGE_REQUEST_STATES:-Express Analysis,Analysis Backlog,Analysis,Development,UAT,Pilot,Closed}
+      TFS_START_DATE_FIELDS: ${TFS_START_DATE_FIELDS:-Microsoft.VSTS.Scheduling.StartDate,System.CreatedDate}
+      TFS_TARGET_DATE_FIELDS: ${TFS_TARGET_DATE_FIELDS:-Microsoft.VSTS.Scheduling.TargetDate,Microsoft.VSTS.Scheduling.FinishDate}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
