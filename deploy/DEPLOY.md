@@ -52,6 +52,26 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 
 Команда `docker compose up` **без `-f`** сработает только если вы стоите в каталоге, где лежит `docker-compose.yml` (или `compose.yaml`).
 
+### Сокет Docker: `lrwxrwxrwx /run/docker.sock -> /run/docker.sock`
+
+Симлинк на **самого себя** — демон «running», но `docker info` не подключается. **Не создавайте** `ln -sf /run/docker.sock` вручную.
+
+```bash
+sudo systemctl stop docker.service docker.socket
+sudo rm -f /run/docker.sock /var/run/docker.sock /etc/tmpfiles.d/docker.sock.conf
+
+sudo systemctl start docker.socket
+sudo systemctl start docker.service
+
+# Должен быть сокет (s), НЕ симлинк (l):
+ls -la /run/docker.sock
+
+unset DOCKER_HOST
+docker info
+```
+
+Ожидается: `srw-rw---- ... /run/docker.sock`
+
 ### Ошибка `open /var/lib/snapd/void/docker-compose.yml: no such file or directory`
 
 Docker установлен через **snap** и не видит относительные пути. Используйте **абсолютные** пути и каталог проекта:
