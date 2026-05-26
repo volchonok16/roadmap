@@ -22,7 +22,7 @@ Nginx + Certbot + Docker: см. [deploy/DEPLOY.md](deploy/DEPLOY.md).
 
 ```bash
 cp .env.production.example .env
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+sudo bash deploy/apply-production.sh
 ```
 
 3. На форме входа укажите `Project`, при необходимости `Project ID`, и один из способов авторизации: PAT, доменный логин/пароль или Cookie из браузерной сессии TFS.

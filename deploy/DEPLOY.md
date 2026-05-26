@@ -1,5 +1,19 @@
 # Деплой на pallink.fun
 
+## Автоматически (рекомендуется)
+
+На VPS одна команда — всё из репозитория, без ручного `nano`:
+
+```bash
+cd /var/www/roadmap
+git pull
+sudo bash deploy/apply-production.sh
+```
+
+Скрипт: Docker (prod), nginx, snippets, HTTPS-конфиг (если есть сертификат), пересборка frontend.
+
+---
+
 | Сервис | Домен | Docker (localhost) |
 |--------|--------|---------------------|
 | Frontend | https://pallink.fun | `127.0.0.1:5173` |
