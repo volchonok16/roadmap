@@ -78,17 +78,22 @@ echo "==> Статус контейнеров"
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 
 echo ""
-echo "==> Проверка API"
-if curl -sf http://127.0.0.1:8000/api/health; then
-  echo ""
-else
-  echo "Предупреждение: backend не отвечает на :8000" >&2
-fi
+echo "==> Ожидание backend (до 30 с)…"
+for i in $(seq 1 15); do
+  if curl -sf http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
+    echo "OK: $(curl -sf http://127.0.0.1:8000/api/health)"
+    break
+  fi
+  if [[ "$i" -eq 15 ]]; then
+    echo "Предупреждение: backend не отвечает на :8000 — docker compose logs backend" >&2
+  fi
+  sleep 2
+done
 
 echo ""
-echo "==> Проверка frontend (локально)"
-HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: pallink.fun' http://127.0.0.1/ || echo '000')"
-echo "HTTP $HTTP_CODE (ожидается 200, не 403)"
+echo "==> Проверка frontend (Vite)"
+HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: localhost' http://127.0.0.1:5173/ || echo '000')"
+echo "HTTP $HTTP_CODE на :5173 (ожидается 200)"
 
 if [[ -f "$CERT_DIR/fullchain.pem" ]]; then
   echo ""
