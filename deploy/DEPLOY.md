@@ -148,6 +148,15 @@ curl -I https://pallink.fun
 curl -s https://api.pallink.fun/api/health
 ```
 
+### HTTP 403 от pallink.fun (nginx OK, Vite dev)
+
+Vite блокирует чужой `Host`. В `frontend/vite.config.ts` задан `allowedHosts`; после обновления пересоберите frontend:
+
+```bash
+cd /var/www/roadmap && git pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build frontend
+```
+
 Автопродление (cron уже ставит certbot):
 
 ```bash
