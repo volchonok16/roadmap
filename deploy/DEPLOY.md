@@ -24,8 +24,13 @@
 ## 2. Docker на сервере
 
 ```bash
-git clone <repo> /opt/ganta
-cd /opt/ganta
+# Клон в пустую папку (рекомендуется)
+git clone https://github.com/volchonok16/roadmap.git /var/www/roadmap
+cd /var/www/roadmap
+
+# Проверка: оба файла должны быть здесь
+ls -la docker-compose.yml docker-compose.prod.yml
+
 cp .env.production.example .env
 # отредактируйте .env (TFS, пароль БД при необходимости)
 
@@ -33,6 +38,19 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 docker compose ps
 curl -s http://127.0.0.1:8000/api/health
 ```
+
+### Ошибка `no configuration file provided: not found`
+
+1. Вы не в корне репозитория — выполните `pwd` и `ls docker-compose.yml`.
+2. Репозиторий не склонирован — в каталоге нет `docker-compose.yml`, сделайте `git clone` (см. выше).
+3. Клон попал во вложенную папку — тогда `cd /var/www/roadmap/roadmap` или переклонируйте в пустой каталог.
+4. Всегда указывайте файлы явно:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+```
+
+Команда `docker compose up` **без `-f`** сработает только если вы стоите в каталоге, где лежит `docker-compose.yml` (или `compose.yaml`).
 
 ## 3. Nginx
 
