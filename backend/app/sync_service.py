@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.board_mapping import board_for_area
 from app.config import settings
+from app.db import SessionLocal, close_db_session
 from app.json_utils import as_dict, as_relation_list, as_work_item_list
 from app.models import Board, ChangeRequest, RawTfsPayload, Requirement, SyncRun, WorkItem, WorkItemRelation
 from app.tfs_auth import TfsAuth
@@ -451,6 +452,16 @@ async def run_sync(
         db.commit()
         db.refresh(sync_run)
 
+    sync_run_id = sync_run.id
+
+    def open_db() -> tuple[Session, SyncRun]:
+        session = SessionLocal()
+        row = session.get(SyncRun, sync_run_id)
+        if row is None:
+            session.close()
+            raise RuntimeError(f"Sync run {sync_run_id} not found")
+        return session, row
+
     client = TfsClient(tfs_auth)
     try:
         team_boards: list[dict[str, Any]] = []
@@ -460,18 +471,27 @@ async def run_sync(
             boards = db.query(Board).all()
         else:
             touch_sync_progress(db, sync_run, "Полная выгрузка: загрузка досок из TFS…")
+            close_db_session(db)
+            db = None  # type: ignore[assignment]
             boards_payload, board_notes = await client.get_boards()
+            db, sync_run = open_db()
             team_boards = replace_board_catalog(db, boards_payload)
             save_raw_payload(
                 db,
-                sync_run.id,
+                sync_run_id,
                 "boards",
                 {"notes": board_notes, "total_fetched": len(boards_payload), "items": team_boards},
             )
             db.commit()
             boards = db.query(Board).all()
+            close_db_session(db)
+            db = None  # type: ignore[assignment]
 
+        if db is None:
+            db, sync_run = open_db()
         touch_sync_progress(db, sync_run, "Поиск ЗНИ в TFS (WIQL)…")
+        close_db_session(db)
+        db = None  # type: ignore[assignment]
         change_ids = await client.get_change_request_ids(
             date_from=date_from if period_mode else None,
             date_to=date_to if period_mode else None,
@@ -479,10 +499,14 @@ async def run_sync(
         )
         wiql_cap = settings.tfs_wiql_max_results
         cap_note = f" (лимит {wiql_cap})" if not period_mode and len(change_ids) >= wiql_cap else ""
+        db, sync_run = open_db()
         touch_sync_progress(db, sync_run, f"Найдено {len(change_ids)} ЗНИ{cap_note}, загрузка карточек…")
+        close_db_session(db)
+        db = None  # type: ignore[assignment]
         change_items = await client.get_work_items_batch(change_ids)
         await client.enrich_scheduling_fields(change_items)
-        save_raw_payload(db, sync_run.id, "change_requests_batch", {"ids": change_ids, "items": change_items})
+        db, sync_run = open_db()
+        save_raw_payload(db, sync_run_id, "change_requests_batch", {"ids": change_ids, "items": change_items})
 
         allowed_states = set(settings.change_request_state_list)
         filtered_changes = [
@@ -501,7 +525,10 @@ async def run_sync(
             + ("" if settings.tfs_fetch_compact_details and len(filtered_changes) <= 80 else " (без детализации)…"),
         )
         fetch_compact = settings.tfs_fetch_compact_details and len(filtered_changes) <= 80
+        close_db_session(db)
+        db = None  # type: ignore[assignment]
         compact_by_id = await fetch_compact_map(client, filtered_changes) if fetch_compact else {}
+        db, sync_run = open_db()
 
         change_payloads: list[dict[str, Any]] = []
         for item in filtered_changes:
@@ -517,9 +544,12 @@ async def run_sync(
         boards = db.query(Board).all()
         parent_map = relation_parent_map(change_payloads)
         touch_sync_progress(db, sync_run, f"Загрузка связей ({len(parent_map)} элементов)…")
+        close_db_session(db)
+        db = None  # type: ignore[assignment]
         requirement_items = await client.get_work_items_batch(sorted(parent_map.keys()))
         await client.enrich_scheduling_fields(requirement_items)
-        save_raw_payload(db, sync_run.id, "linked_items_batch", {"ids": sorted(parent_map.keys()), "items": requirement_items})
+        db, sync_run = open_db()
+        save_raw_payload(db, sync_run_id, "linked_items_batch", {"ids": sorted(parent_map.keys()), "items": requirement_items})
         saved_requirements = 0
         saved_linked_items = 0
         for item in as_work_item_list(requirement_items):
@@ -547,18 +577,25 @@ async def run_sync(
             f"связанные элементы: {saved_linked_items}, требования: {saved_requirements}"
         )
     except httpx.HTTPStatusError as exc:
+        if db is None:
+            db, sync_run = open_db()
         db.rollback()
         sync_run.status = "failed"
         sync_run.message = friendly_http_error(exc)
     except Exception as exc:
+        if db is None:
+            db, sync_run = open_db()
         db.rollback()
         sync_run.status = "failed"
         sync_run.message = str(exc)
     finally:
         await client.close()
+        if db is None:
+            db, sync_run = open_db()
         sync_run.finished_at = datetime.now(UTC)
         db.add(sync_run)
         db.commit()
         db.refresh(sync_run)
+        close_db_session(db)
 
     return sync_run
