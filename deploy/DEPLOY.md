@@ -52,6 +52,31 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 
 Команда `docker compose up` **без `-f`** сработает только если вы стоите в каталоге, где лежит `docker-compose.yml` (или `compose.yaml`).
 
+### Ошибка `open /var/lib/snapd/void/docker-compose.yml: no such file or directory`
+
+Docker установлен через **snap** и не видит относительные пути. Используйте **абсолютные** пути и каталог проекта:
+
+```bash
+export ROADMAP_ROOT=/var/www/roadmap
+cd "$ROADMAP_ROOT"
+
+docker compose --project-directory "$ROADMAP_ROOT" \
+  -f "$ROADMAP_ROOT/docker-compose.yml" \
+  -f "$ROADMAP_ROOT/docker-compose.prod.yml" \
+  up --build -d
+```
+
+Либо поставьте Docker из официального репозитория (рекомендуется на VPS):
+
+```bash
+sudo snap remove docker
+# https://docs.docker.com/engine/install/ubuntu/
+sudo apt install -y docker.io docker-compose-plugin
+sudo usermod -aG docker "$USER"
+```
+
+Проверка: `docker compose version` и `which docker` (не `/snap/bin/docker`).
+
 ## 3. Nginx
 
 ```bash
