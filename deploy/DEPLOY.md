@@ -133,10 +133,11 @@ sudo certbot certonly --webroot -w /var/www/certbot \
 sudo certbot --nginx -d pallink.fun -d www.pallink.fun -d api.pallink.fun
 ```
 
-Подключите HTTPS-конфиг:
+Подключите HTTPS-конфиг (сниппет SSL без `options-ssl-nginx.conf` — подходит после `certbot certonly --webroot`):
 
 ```bash
-sudo cp /opt/ganta/deploy/nginx/pallink.conf /etc/nginx/sites-available/pallink.conf
+sudo cp /var/www/roadmap/deploy/nginx/snippets/ssl-pallink.conf /etc/nginx/snippets/
+sudo cp /var/www/roadmap/deploy/nginx/pallink.conf /etc/nginx/sites-available/pallink.conf
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
