@@ -1,7 +1,7 @@
 /** Идентификаторы виджетов на странице метрик (позже — drag/resize в сетке). */
-export type MetricWidgetId = 'streams-count' | 'closed-requirements' | 'board-comparison'
+export type MetricWidgetId = 'streams-count' | 'closed-requirements' | 'release-shipment'
 
-export type MetricWidgetKind = 'kpi' | 'kpi-release-chart' | 'board-chart'
+export type MetricWidgetKind = 'kpi' | 'kpi-release-chart' | 'release-chart'
 
 export type MetricWidgetLayout = {
   id: MetricWidgetId
@@ -18,21 +18,22 @@ export const defaultMetricWidgets: MetricWidgetLayout[] = [
     id: 'streams-count',
     kind: 'kpi',
     title: 'Стримы (доски)',
-    hint: 'Количество досок TFS, подключённых к roadmap',
+    hint: 'Количество досок TFS, с которых собираются ЗНИ',
     gridColumn: 'span 1',
   },
   {
     id: 'closed-requirements',
     kind: 'kpi-release-chart',
     title: 'Требования в Closed',
-    hint: 'Отгрузка: закрытые требования по релизам',
+    hint: 'Всего закрытых требований в выборке',
     gridColumn: 'span 1',
   },
   {
-    id: 'board-comparison',
-    kind: 'board-chart',
-    title: 'Сравнение досок',
-    hint: 'Команда = доска TFS. Закрытые требования по каждой доске; зелёным — доски, выбранные на Roadmap',
+    id: 'release-shipment',
+    kind: 'release-chart',
+    title: 'Отгрузка по релизам',
+    hint:
+      'Закрытые требования по окну между датами релизов: (прошлый релиз → текущий]. Учитывается ранний Closed до даты релиза',
     gridColumn: '1 / -1',
   },
 ]

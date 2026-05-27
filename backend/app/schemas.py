@@ -44,6 +44,7 @@ class RequirementOut(ApiModel):
     tfs_url: str | None = None
     start_date: date | None = None
     target_date: date | None = None
+    closed_date: datetime | None = None
     errors: list[LinkedErrorOut] = Field(default_factory=list)
 
 

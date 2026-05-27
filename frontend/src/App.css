@@ -3391,7 +3391,7 @@ h2 {
   min-height: 300px;
 }
 
-.metrics-widget-board-chart {
+.metrics-widget-release-chart {
   min-height: 280px;
 }
 
@@ -3529,12 +3529,12 @@ h2 {
   white-space: nowrap;
 }
 
-.metrics-widget-board-chart .metrics-bar-chart-plot {
+.metrics-widget-release-chart .metrics-bar-chart-plot {
   min-height: 160px;
 }
 
-.metrics-widget-board-chart .metrics-bar-chart-col {
-  max-width: 96px;
+.metrics-widget-release-chart .metrics-bar-chart-col {
+  max-width: 72px;
 }
 
 .metrics-dashboard-foot {

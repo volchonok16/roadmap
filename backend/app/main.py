@@ -503,6 +503,7 @@ def roadmap(
                 tfs_url=work_item_url(row, tfs_auth),
                 start_date=row.start_date,
                 target_date=row.target_date,
+                closed_date=row.closed_date,
                 errors=errors_by_parent.get(row.id, []),
             )
         )

@@ -1,5 +1,11 @@
 import type { MetricBarPoint } from './metricsCharts'
-import { shortReleaseLabel } from './metricsCharts'
+
+export function formatReleaseAxisLabel(label: string) {
+  if (label === 'Closed без даты' || label === 'Без релиза') return label
+  const match = label.match(/^(\d{4})\.(\d{2})\.(\d{2})/)
+  if (!match) return label.length > 10 ? `${label.slice(0, 10)}…` : label
+  return `${match[3]}.${match[2]}`
+}
 
 type MetricsBarChartProps = {
   series: MetricBarPoint[]
@@ -29,7 +35,11 @@ export default function MetricsBarChart({
   const labelFor = formatLabel ?? ((label: string) => label)
 
   return (
-    <div className="metrics-bar-chart" role="img" aria-label="Столбчатая диаграмма">
+    <div
+      className={`metrics-bar-chart ${variant === 'release' ? 'metrics-bar-chart-release' : ''}`}
+      role="img"
+      aria-label="Столбчатая диаграмма"
+    >
       <div className="metrics-bar-chart-plot">
         {series.map((item) => {
           const heightPct = Math.max((item.value / maxValue) * 100, 6)
@@ -55,9 +65,4 @@ export default function MetricsBarChart({
       </div>
     </div>
   )
-}
-
-export function formatReleaseAxisLabel(label: string) {
-  if (label === 'Без релиза') return label
-  return shortReleaseLabel(label)
 }

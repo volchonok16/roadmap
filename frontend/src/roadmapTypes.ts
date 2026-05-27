@@ -21,6 +21,8 @@ export type Requirement = {
   tfsUrl?: string | null
   startDate?: string | null
   targetDate?: string | null
+  /** Microsoft.VSTS.Common.ClosedDate из TFS */
+  closedDate?: string | null
   errors?: LinkedError[]
 }
 

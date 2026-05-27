@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { readInitialSelectedBoardIds } from './boardPreferences'
 import { apiFetch, clearSessionId, getJson } from './api'
 import MetricsBarChart, { formatReleaseAxisLabel } from './MetricsBarChart'
-import {
-  buildClosedDeliveriesByBoard,
-  buildClosedDeliveriesByRelease,
-  type MetricBarPoint,
-} from './metricsCharts'
+import { buildShippedTasksByRelease, type MetricBarPoint } from './metricsCharts'
 import { countClosedRequirements, countStreams } from './metricsSummary'
 import { defaultMetricWidgets, type MetricWidgetId } from './metricsWidgets'
 import { normalizeRoadmapItems } from './linkedErrors'
@@ -33,7 +28,6 @@ type MetricsSummary = {
 
 type MetricsCharts = {
   byRelease: MetricBarPoint[]
-  byBoard: MetricBarPoint[]
 }
 
 type MetricsScreenProps = {
@@ -42,17 +36,16 @@ type MetricsScreenProps = {
 
 function metricsLoadRange() {
   const year = new Date().getFullYear()
-  return { from: `${year - 2}-01-01`, to: `${year + 2}-12-31` }
+  return {
+    from: `${year - 2}-01-01`,
+    to: `${year + 2}-12-31`,
+    fromDate: new Date(year - 2, 0, 1),
+  }
 }
 
 function formatMetricValue(value: number | null) {
   if (value === null) return '—'
   return value.toLocaleString('ru-RU')
-}
-
-function shortBoardLabel(label: string) {
-  const trimmed = label.replace(/^Digital Streams\s+/i, 'DS ')
-  return trimmed.length > 14 ? `${trimmed.slice(0, 13)}…` : trimmed
 }
 
 export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
@@ -62,7 +55,6 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const [charts, setCharts] = useState<MetricsCharts | null>(null)
   const [generatedAt, setGeneratedAt] = useState<string | null>(null)
   const range = useMemo(() => metricsLoadRange(), [])
-  const highlightBoardIds = useMemo(() => readInitialSelectedBoardIds(), [])
 
   const loadMetrics = useCallback(async () => {
     setLoading(true)
@@ -80,8 +72,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         requirementCount,
       })
       setCharts({
-        byRelease: buildClosedDeliveriesByRelease(items),
-        byBoard: buildClosedDeliveriesByBoard(items, highlightBoardIds),
+        byRelease: buildShippedTasksByRelease(items, range.fromDate),
       })
       setGeneratedAt(roadmap.generatedAt ?? null)
     } catch (err) {
@@ -91,7 +82,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     } finally {
       setLoading(false)
     }
-  }, [range.from, range.to, highlightBoardIds])
+  }, [range.from, range.to, range.fromDate])
 
   useEffect(() => {
     void loadMetrics()
@@ -111,8 +102,19 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const widgetValues: Record<MetricWidgetId, number | null> = {
     'streams-count': summary?.streams ?? null,
     'closed-requirements': summary?.closedRequirements ?? null,
-    'board-comparison': summary?.closedRequirements ?? null,
+    'release-shipment': charts?.byRelease.reduce((acc, row) => acc + row.value, 0) ?? null,
   }
+
+  const releaseChart = (
+    <MetricsBarChart
+      series={charts?.byRelease ?? []}
+      loading={loading}
+      emptyLabel="Нет закрытых требований с датой Closed в окнах релизов"
+      formatLabel={formatReleaseAxisLabel}
+      valueSuffix=" треб."
+      variant="release"
+    />
+  )
 
   const renderWidgetBody = (widgetId: MetricWidgetId, kind: (typeof defaultMetricWidgets)[number]['kind']) => {
     if (kind === 'kpi') {
@@ -128,32 +130,19 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           <span className="metrics-widget-value metrics-widget-value-compact">
             {loading ? '…' : formatMetricValue(widgetValues[widgetId])}
           </span>
-          <MetricsBarChart
-            series={charts?.byRelease ?? []}
-            loading={loading}
-            emptyLabel="Нет закрытых требований с релизом"
-            formatLabel={formatReleaseAxisLabel}
-            valueSuffix=" треб."
-            variant="release"
-          />
+          {releaseChart}
         </div>
       )
     }
-    const boardTotal = charts?.byBoard.reduce((acc, row) => acc + row.value, 0) ?? 0
+    const shippedTotal = charts?.byRelease.reduce((acc, row) => acc + row.value, 0) ?? 0
     return (
       <div className="metrics-widget-body metrics-widget-body-chart">
         <p className="metrics-widget-chart-summary">
           {loading
             ? '…'
-            : `${boardTotal.toLocaleString('ru-RU')} закрытых требований по ${charts?.byBoard.length ?? 0} доскам`}
+            : `${shippedTotal.toLocaleString('ru-RU')} отгружено по ${charts?.byRelease.filter((r) => r.label !== 'Closed без даты').length ?? 0} релизам · сравнение релиз к релизу`}
         </p>
-        <MetricsBarChart
-          series={charts?.byBoard ?? []}
-          loading={loading}
-          emptyLabel="Нет закрытых требований по доскам"
-          formatLabel={shortBoardLabel}
-          valueSuffix=" треб."
-        />
+        {releaseChart}
       </div>
     )
   }
