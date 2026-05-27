@@ -91,7 +91,7 @@ describe('buildShippedTasksByRelease', () => {
         ],
       },
     ]
-    const series = buildShippedTasksByRelease(items, localDate('2026-01-01'))
+    const series = buildShippedTasksByRelease(items, localDate('2026-01-01'), { includeEmptyBars: false })
     expect(series.find((row) => row.label === '2026.06.02.0-R')?.value).toBe(1)
     expect(series.find((row) => row.label === '2026.06.16.0-R')?.value).toBe(2)
     expect(series.find((row) => row.label === '2026.06.30.0-R')).toBeUndefined()

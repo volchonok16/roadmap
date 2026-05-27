@@ -92,11 +92,19 @@ export function shortReleaseLabel(label: string) {
   return `${match[3]}.${match[2]}`
 }
 
+export type ShippedByReleaseOptions = {
+  maxBars?: number
+  /** Гистограмма: показывать все окна релизов, в т.ч. с нулём отгрузки */
+  includeEmptyBars?: boolean
+}
+
 export function buildShippedTasksByRelease(
   items: ChangeRequest[],
   periodStart: Date,
-  maxBars = 14,
+  options: ShippedByReleaseOptions = {},
 ): MetricBarPoint[] {
+  const maxBars = options.maxBars ?? 14
+  const includeEmptyBars = options.includeEmptyBars ?? false
   const schedule = collectReleaseSchedule(items)
   if (!schedule.length) return []
 
@@ -117,13 +125,17 @@ export function buildShippedTasksByRelease(
     }
   }
 
-  const series = schedule
-    .map((entry) => ({
-      label: entry.label,
-      value: counts.get(entry.label) ?? 0,
-      sortKey: entry.date.getTime(),
-    }))
-    .filter((row) => row.value > 0)
+  let series = schedule.map((entry) => ({
+    label: entry.label,
+    value: counts.get(entry.label) ?? 0,
+    sortKey: entry.date.getTime(),
+  }))
+
+  if (!includeEmptyBars) {
+    series = series.filter((row) => row.value > 0)
+  }
+
+  series = series.slice(-maxBars)
 
   if (withoutClosedDate > 0) {
     series.push({
@@ -133,7 +145,7 @@ export function buildShippedTasksByRelease(
     })
   }
 
-  return series.slice(-maxBars)
+  return series
 }
 
 /** @deprecated Используйте buildShippedTasksByRelease */

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { readInitialSelectedBoardIds } from './boardPreferences'
 import { apiFetch, clearSessionId, getJson } from './api'
 import MetricsBarChart, { formatReleaseAxisLabel } from './MetricsBarChart'
+import MetricsHistogram from './MetricsHistogram'
+import { readMetricsStreamBoardId, writeMetricsStreamBoardId } from './metricsBoard'
+import { filterItemsByBoard } from './metricsBoardFilter'
 import { buildShippedTasksByRelease, type MetricBarPoint } from './metricsCharts'
 import { countClosedRequirements, countStreams } from './metricsSummary'
 import { defaultMetricWidgets, type MetricWidgetId } from './metricsWidgets'
@@ -26,10 +30,6 @@ type MetricsSummary = {
   requirementCount: number
 }
 
-type MetricsCharts = {
-  byRelease: MetricBarPoint[]
-}
-
 type MetricsScreenProps = {
   onLogout: () => void
 }
@@ -43,6 +43,14 @@ function metricsLoadRange() {
   }
 }
 
+function readInitialMetricsBoardId(boards: Board[]) {
+  const saved = readMetricsStreamBoardId()
+  if (saved && boards.some((board) => board.id === saved)) return saved
+  const fromRoadmap = readInitialSelectedBoardIds().find((id) => boards.some((board) => board.id === id))
+  if (fromRoadmap) return fromRoadmap
+  return ''
+}
+
 function formatMetricValue(value: number | null) {
   if (value === null) return '—'
   return value.toLocaleString('ru-RU')
@@ -51,42 +59,81 @@ function formatMetricValue(value: number | null) {
 export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [boards, setBoards] = useState<Board[]>([])
+  const [allItems, setAllItems] = useState<ChangeRequest[]>([])
   const [summary, setSummary] = useState<MetricsSummary | null>(null)
-  const [charts, setCharts] = useState<MetricsCharts | null>(null)
+  const [streamBoardId, setStreamBoardId] = useState('')
   const [generatedAt, setGeneratedAt] = useState<string | null>(null)
   const range = useMemo(() => metricsLoadRange(), [])
+
+  const streamItems = useMemo(
+    () => filterItemsByBoard(allItems, streamBoardId || null),
+    [allItems, streamBoardId],
+  )
+
+  const releaseHistogram = useMemo(
+    () =>
+      buildShippedTasksByRelease(streamItems, range.fromDate, {
+        maxBars: 16,
+        includeEmptyBars: true,
+      }),
+    [streamItems, range.fromDate],
+  )
+
+  const releaseChartCompact = useMemo(
+    () =>
+      buildShippedTasksByRelease(streamItems, range.fromDate, {
+        maxBars: 8,
+        includeEmptyBars: false,
+      }),
+    [streamItems, range.fromDate],
+  )
 
   const loadMetrics = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const boards = await getJson<Board[]>('/api/boards')
+      const boardRows = await getJson<Board[]>('/api/boards')
       const params = new URLSearchParams({ from: range.from, to: range.to })
       const roadmap = await getJson<RoadmapResponse>(`/api/roadmap?${params}`)
       const items = normalizeRoadmapItems(roadmap.items ?? [])
+      const mergedBoards = new Map(boardRows.map((board) => [board.id, board]))
+      for (const board of roadmap.boards ?? []) mergedBoards.set(board.id, board)
+      const boardList = Array.from(mergedBoards.values()).sort((left, right) =>
+        left.name.localeCompare(right.name, 'ru'),
+      )
+
+      setBoards(boardList)
+      setAllItems(items)
+      setStreamBoardId((prev) => {
+        if (prev && boardList.some((board) => board.id === prev)) return prev
+        return readInitialMetricsBoardId(boardList)
+      })
+
       const requirementCount = items.reduce((acc, item) => acc + item.requirements.length, 0)
       setSummary({
-        streams: countStreams(boards.length),
+        streams: countStreams(boardList.length),
         closedRequirements: countClosedRequirements(items),
         zniCount: items.length,
         requirementCount,
-      })
-      setCharts({
-        byRelease: buildShippedTasksByRelease(items, range.fromDate),
       })
       setGeneratedAt(roadmap.generatedAt ?? null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить метрики')
       setSummary(null)
-      setCharts(null)
+      setAllItems([])
     } finally {
       setLoading(false)
     }
-  }, [range.from, range.to, range.fromDate])
+  }, [range.from, range.to])
 
   useEffect(() => {
     void loadMetrics()
   }, [loadMetrics])
+
+  useEffect(() => {
+    writeMetricsStreamBoardId(streamBoardId)
+  }, [streamBoardId])
 
   const logout = async () => {
     try {
@@ -99,21 +146,37 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     }
   }
 
+  const streamBoardName =
+    streamBoardId ? boards.find((board) => board.id === streamBoardId)?.name ?? 'Доска' : 'Все доски'
+
+  const shippedTotal = releaseHistogram
+    .filter((row) => row.label !== 'Closed без даты')
+    .reduce((acc, row) => acc + row.value, 0)
+
   const widgetValues: Record<MetricWidgetId, number | null> = {
     'streams-count': summary?.streams ?? null,
-    'closed-requirements': summary?.closedRequirements ?? null,
-    'release-shipment': charts?.byRelease.reduce((acc, row) => acc + row.value, 0) ?? null,
+    'closed-requirements': countClosedRequirements(streamItems),
+    'release-shipment': shippedTotal,
   }
 
-  const releaseChart = (
-    <MetricsBarChart
-      series={charts?.byRelease ?? []}
-      loading={loading}
-      emptyLabel="Нет закрытых требований с датой Closed в окнах релизов"
-      formatLabel={formatReleaseAxisLabel}
-      valueSuffix=" треб."
-      variant="release"
-    />
+  const streamBoardSelect = (
+    <label className="metrics-stream-board-picker">
+      <span className="metrics-stream-board-picker-label">Стрим (доска)</span>
+      <select
+        className="metrics-stream-board-select filter-bar-input"
+        value={streamBoardId}
+        disabled={loading || !boards.length}
+        aria-label="Доска стрима для гистограммы"
+        onChange={(event) => setStreamBoardId(event.target.value)}
+      >
+        <option value="">Все доски</option>
+        {boards.map((board) => (
+          <option key={board.id} value={board.id}>
+            {board.name}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 
   const renderWidgetBody = (widgetId: MetricWidgetId, kind: (typeof defaultMetricWidgets)[number]['kind']) => {
@@ -130,19 +193,30 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           <span className="metrics-widget-value metrics-widget-value-compact">
             {loading ? '…' : formatMetricValue(widgetValues[widgetId])}
           </span>
-          {releaseChart}
+          <MetricsBarChart
+            series={releaseChartCompact}
+            loading={loading}
+            emptyLabel="Нет отгрузки по выбранной доске"
+            formatLabel={formatReleaseAxisLabel}
+            valueSuffix=" треб."
+            variant="release"
+          />
         </div>
       )
     }
-    const shippedTotal = charts?.byRelease.reduce((acc, row) => acc + row.value, 0) ?? 0
     return (
       <div className="metrics-widget-body metrics-widget-body-chart">
         <p className="metrics-widget-chart-summary">
           {loading
             ? '…'
-            : `${shippedTotal.toLocaleString('ru-RU')} отгружено по ${charts?.byRelease.filter((r) => r.label !== 'Closed без даты').length ?? 0} релизам · сравнение релиз к релизу`}
+            : `${streamBoardName}: ${shippedTotal.toLocaleString('ru-RU')} отгружено по ${releaseHistogram.filter((r) => r.label !== 'Closed без даты').length} релизам`}
         </p>
-        {releaseChart}
+        <MetricsHistogram
+          series={releaseHistogram}
+          loading={loading}
+          emptyLabel="Нет закрытых требований с датой Closed для выбранной доски"
+          valueSuffix=" треб."
+        />
       </div>
     )
   }
@@ -181,9 +255,14 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
               style={{ gridColumn: widget.gridColumn, gridRow: widget.gridRow }}
               data-metric-id={widget.id}
             >
-              <header className="metrics-widget-head">
-                <h2 className="metrics-widget-title">{widget.title}</h2>
-                <p className="metrics-widget-hint">{widget.hint}</p>
+              <header
+                className={`metrics-widget-head ${widget.id === 'release-shipment' ? 'metrics-widget-head-with-picker' : ''}`}
+              >
+                <div className="metrics-widget-head-text">
+                  <h2 className="metrics-widget-title">{widget.title}</h2>
+                  <p className="metrics-widget-hint">{widget.hint}</p>
+                </div>
+                {widget.id === 'release-shipment' ? streamBoardSelect : null}
               </header>
               {renderWidgetBody(widget.id, widget.kind)}
             </article>
