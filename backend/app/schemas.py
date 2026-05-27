@@ -38,6 +38,7 @@ class ChangeRequestOut(ApiModel):
     id: int
     title: str
     state: str
+    tags: list[str] = Field(default_factory=list)
     board_id: str | None = None
     board_name: str | None = None
     area_path: str | None = None

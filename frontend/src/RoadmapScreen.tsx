@@ -12,6 +12,8 @@ import {
 import { apiFetch, clearSessionId, getJson, getSessionId } from './api'
 import BoardMultiPicker, { formatBoardPickerLabel } from './BoardMultiPicker'
 import PeriodPicker, { type PeriodScale } from './PeriodPicker'
+import TagChips from './TagChips'
+import TagFilterStrip from './TagFilterStrip'
 import RoadmapGrid, { type BoardGroup, type SidebarHead } from './RoadmapGrid'
 import type { TaskRow } from './RoadmapGrid'
 import type { ChangeRequest, Requirement } from './roadmapTypes'
@@ -102,6 +104,7 @@ const USE_USER_START_DATE_KEY = 'roadmap-use-user-start-date'
 const REQUIREMENT_SORT_KEY = 'roadmap-requirement-sort'
 const REQUIREMENT_SORT_STATUS_KEY = 'roadmap-requirement-sort-status'
 const REQUIREMENT_SORT_DATE_KEY = 'roadmap-requirement-sort-date'
+const SELECTED_TAGS_KEY = 'roadmap-selected-tags'
 
 type RequirementSortAxes = {
   byStatus: boolean
@@ -150,6 +153,36 @@ function barStartDate(startDate: string, userStartDate: string | null | undefine
 
 function isStateVisible(state: string, hiddenStates: string[]) {
   return !hiddenStates.includes(state)
+}
+
+function readSelectedTags(): string[] {
+  try {
+    const raw = localStorage.getItem(SELECTED_TAGS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  } catch {
+    return []
+  }
+}
+
+function isItemVisibleByTags(item: ChangeRequest, selectedTags: string[]) {
+  if (!selectedTags.length) return true
+  const tags = item.tags ?? []
+  if (!tags.length) return false
+  return tags.some((tag) => selectedTags.includes(tag))
+}
+
+function collectTagsFromItems(items: ChangeRequest[]) {
+  const result = new Set<string>()
+  for (const item of items) {
+    for (const tag of item.tags ?? []) {
+      const trimmed = tag.trim()
+      if (trimmed) result.add(trimmed)
+    }
+  }
+  return Array.from(result).sort((left, right) => left.localeCompare(right, 'ru'))
 }
 
 function hasUserStartDate(item: ChangeRequest) {
@@ -638,6 +671,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [selectedRequirementId, setSelectedRequirementId] = useState<number | null>(null)
   const [hiddenStates, setHiddenStates] = useState<string[]>([])
+  const [selectedTags, setSelectedTags] = useState<string[]>(readSelectedTags)
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [useUserStartDate, setUseUserStartDate] = useState(readUseUserStartDate)
   const [requirementSortAxes, setRequirementSortAxes] = useState<RequirementSortAxes>(readRequirementSortAxes)
@@ -649,6 +683,10 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     setHiddenStates((prev) =>
       prev.includes(state) ? prev.filter((item) => item !== state) : [...prev, state],
     )
+  }, [])
+
+  const toggleSelectedTag = useCallback((tag: string) => {
+    setSelectedTags((prev) => (prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag]))
   }, [])
 
   const toggleZniExpanded = useCallback((zniId: number) => {
@@ -667,6 +705,10 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   useEffect(() => {
     localStorage.setItem(USE_USER_START_DATE_KEY, useUserStartDate ? '1' : '0')
   }, [useUserStartDate])
+
+  useEffect(() => {
+    localStorage.setItem(SELECTED_TAGS_KEY, JSON.stringify(selectedTags))
+  }, [selectedTags])
 
   useEffect(() => {
     localStorage.setItem(REQUIREMENT_SORT_STATUS_KEY, requirementSortAxes.byStatus ? '1' : '0')
@@ -940,7 +982,12 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     ? stateVisibleItems.filter((item) => hasUserStartDate(item))
     : stateVisibleItems
   const boardFilteredItems = visibleItems.filter((item) => itemMatchesSelectedBoards(item, selectedBoardIds))
-  const groups = groupByBoard(boardFilteredItems)
+  const availableTags = useMemo(() => collectTagsFromItems(boardFilteredItems), [boardFilteredItems])
+  useEffect(() => {
+    setSelectedTags((prev) => prev.filter((tag) => availableTags.includes(tag)))
+  }, [availableTags])
+  const tagFilteredItems = boardFilteredItems.filter((item) => isItemVisibleByTags(item, selectedTags))
+  const groups = groupByBoard(tagFilteredItems)
   const sidebarHead = useMemo((): SidebarHead => {
     if (groups.length === 1) {
       const group = groups[0]
@@ -955,6 +1002,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     }
   }, [groups, selectedBoardIds, boardOptions])
   const isStatusFiltering = hiddenStates.length > 0
+  const isTagFiltering = selectedTags.length > 0
   const isStartDateFiltering = useUserStartDate
   const isBoardSelectionFiltering = selectedBoardIds.length > 0
   const startDateZniCount = stateVisibleItems.filter((item) => hasUserStartDate(item)).length
@@ -1136,29 +1184,38 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
       const zni = row.item
       const tfsHref = workItemHref(zni)
       const isActive = selectedItemId === zni.id && selectedRequirementId === null
+      const zniBarStart = barStartDate(zni.startDate, zni.userStartDate, useUserStartDate)
+      const zniBarWidth = progressWidth(zniBarStart, zni.targetDate, fromDate, toDate)
+      const zniHasTags = Boolean(zni.tags?.length)
+      const zniBarIsNarrow = zniHasTags && zniBarWidth < 22
       return (
-        <article className={`sync-row sync-row-zni roadmap-row roadmap-row-zni ${isActive ? 'active' : ''}`}>
+        <article
+          className={`sync-row sync-row-zni roadmap-row roadmap-row-zni ${isActive ? 'active' : ''} ${zniHasTags ? 'roadmap-row-has-tags' : ''} ${zniBarIsNarrow ? 'roadmap-row-has-tags-narrow' : ''}`}
+        >
           <div className="timeline-zoom-track">
             <div className="row-track">
               <div
-                className={`bar bar-zni ${statusClass(zni.state)}`}
+                className={`bar bar-zni ${statusClass(zni.state)} ${zniHasTags ? 'bar-has-tags' : ''} ${zniBarIsNarrow ? 'bar-is-narrow' : ''}`}
                 style={{
-                  left: `${progressLeft(barStartDate(zni.startDate, zni.userStartDate, useUserStartDate), fromDate, toDate)}%`,
-                  width: `${progressWidth(barStartDate(zni.startDate, zni.userStartDate, useUserStartDate), zni.targetDate, fromDate, toDate)}%`,
+                  left: `${progressLeft(zniBarStart, fromDate, toDate)}%`,
+                  width: `${zniBarWidth}%`,
                   minWidth: '172px',
                 }}
-                title={`${zoneTitle(zni)} · ${zni.state}\n${zni.title}\nСтарт ${formatDate(barStartDate(zni.startDate, zni.userStartDate, useUserStartDate))} · план ${formatDate(zni.targetDate)}`}
+                title={`${zoneTitle(zni)} · ${zni.state}\n${zni.title}\nСтарт ${formatDate(zniBarStart)} · план ${formatDate(zni.targetDate)}${zni.tags?.length ? `\nТеги: ${zni.tags.join(', ')}` : ''}`}
                 onClick={(event) => {
                   if ((event.target as HTMLElement).closest('.selectable-text, .tfs-link')) return
                   focusTask(zni.id)
                 }}
               >
-                <div className="bar-text">
-                  <span className="bar-kind-badge bar-kind-zni">Запрос на изменение</span>
-                  <span className="bar-status">{zni.state}</span>
-                  <span className="bar-label selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
-                    <b>#{zni.id}</b> {zni.title}
-                  </span>
+                <div className="bar-main">
+                  <div className="bar-text">
+                    <span className="bar-kind-badge bar-kind-zni">Запрос на изменение</span>
+                    <span className="bar-status">{zni.state}</span>
+                    <span className="bar-label selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
+                      <b>#{zni.id}</b> {zni.title}
+                    </span>
+                  </div>
+                  <TagChips tags={zni.tags ?? []} variant="bar" maxVisible={5} />
                 </div>
                 {tfsHref ? <TfsLink href={tfsHref} className="bar-tfs-link" /> : null}
               </div>
@@ -1266,11 +1323,13 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
               ? 'Загрузка…'
               : isStartDateFiltering
                 ? `${visibleItems.length} / ${startDateZniCount} ЗНИ (Start Date)`
-                : isBoardSelectionFiltering
-                  ? `${boardFilteredItems.length} / ${visibleItems.length} ЗНИ (доски)`
-                  : isStatusFiltering
-                    ? `${visibleItems.length} / ${totalItems.length} ЗНИ`
-                    : `${visibleItems.length} ЗНИ`}
+                : isTagFiltering
+                  ? `${tagFilteredItems.length} / ${boardFilteredItems.length} ЗНИ (теги)`
+                  : isBoardSelectionFiltering
+                    ? `${boardFilteredItems.length} / ${visibleItems.length} ЗНИ (доски)`
+                    : isStatusFiltering
+                      ? `${visibleItems.length} / ${totalItems.length} ЗНИ`
+                      : `${visibleItems.length} ЗНИ`}
             {data?.generatedAt ? ` · обновлено ${formatDate(data.generatedAt)}` : ''}
           </span>
         </div>
@@ -1416,6 +1475,14 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
               Показать все статусы
             </button>
           )}
+          <span className="filter-strip-sep" aria-hidden />
+          <span className="filter-strip-label">Теги</span>
+          <TagFilterStrip
+            tags={availableTags}
+            selectedTags={selectedTags}
+            onToggle={toggleSelectedTag}
+            onClear={() => setSelectedTags([])}
+          />
           {syncRun && (
             <span className={`sync-hint ${syncRun.status === 'failed' ? 'sync-hint-error' : ''}`}>
               {syncRun.status === 'success'
@@ -1443,29 +1510,33 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           renderTaskCell={renderTaskCell}
           renderTimelineCell={renderTimelineCell}
           loading={loading}
-          visibleCount={boardFilteredItems.length}
+          visibleCount={tagFilteredItems.length}
           buildTaskRows={buildTaskRowsForGrid}
           sidebarHead={sidebarHead}
           timelineHead={timelineHead}
           emptyState={
             <div className="task-list-empty">
               <strong>
-                {isBoardSelectionFiltering
-                  ? 'Нет ЗНИ для выбранных досок'
-                  : isStartDateFiltering
-                    ? 'Нет ЗНИ с Start Date'
-                    : isStatusFiltering
-                      ? 'Нет ЗНИ с видимыми статусами'
-                      : 'Нет ЗНИ за период'}
+                {isTagFiltering
+                  ? 'Нет ЗНИ с выбранными тегами'
+                  : isBoardSelectionFiltering
+                    ? 'Нет ЗНИ для выбранных досок'
+                    : isStartDateFiltering
+                      ? 'Нет ЗНИ с Start Date'
+                      : isStatusFiltering
+                        ? 'Нет ЗНИ с видимыми статусами'
+                        : 'Нет ЗНИ за период'}
               </strong>
               <p>
-                {isBoardSelectionFiltering
-                  ? 'Откройте выбор досок и отметьте нужные, либо нажмите «Все доски».'
-                  : isStartDateFiltering
-                    ? 'У видимых ЗНИ в TFS не заполнено поле Start Date, или отключите фильтр «Только Start Date».'
-                    : isStatusFiltering
-                      ? 'Включите статусы в шапке или нажмите «Показать все статусы».'
-                      : 'Нажмите «Выгрузить» или «Обновить» для загрузки из TFS.'}
+                {isTagFiltering
+                  ? 'Включите другие теги в «Теги» или нажмите «Сбросить фильтр».'
+                  : isBoardSelectionFiltering
+                    ? 'Откройте выбор досок и отметьте нужные, либо нажмите «Все доски».'
+                    : isStartDateFiltering
+                      ? 'У видимых ЗНИ в TFS не заполнено поле Start Date, или отключите фильтр «Только Start Date».'
+                      : isStatusFiltering
+                        ? 'Включите статусы в шапке или нажмите «Показать все статусы».'
+                        : 'Нажмите «Выгрузить» или «Обновить» для загрузки из TFS.'}
               </p>
             </div>
           }

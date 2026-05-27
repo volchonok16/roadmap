@@ -19,7 +19,12 @@ from app.auth_service import (
 from app.auth_sessions import delete_session, get_session
 from app.board_mapping import streams_board_display_name
 from app.config import settings
-from app.sync_service import supplement_boards_from_area_paths, user_start_date_from_fields, work_item_kanban_column
+from app.sync_service import (
+    supplement_boards_from_area_paths,
+    user_start_date_from_fields,
+    work_item_kanban_column,
+    work_item_tags,
+)
 from app.db import Base, SessionLocal, engine, get_db
 from app.models import Board, SyncRun, WorkItem
 from app.schemas import (
@@ -435,6 +440,7 @@ def roadmap(
             id=row.id,
             title=row.title,
             state=row.state,
+            tags=work_item_tags(row.fields),
             board_id=row.board_id,
             board_name=(
                 board_by_id[row.board_id].name

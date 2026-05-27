@@ -15,6 +15,8 @@ export type ChangeRequest = {
   id: number
   title: string
   state: string
+  /** Теги TFS (System.Tags), через «;». */
+  tags?: string[]
   boardId?: string | null
   boardName?: string | null
   areaPath?: string | null

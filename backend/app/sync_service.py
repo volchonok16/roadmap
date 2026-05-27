@@ -86,6 +86,16 @@ def work_item_kanban_column(fields: dict[str, Any] | None) -> str | None:
     return str(value).strip()
 
 
+def work_item_tags(fields: dict[str, Any] | None) -> list[str]:
+    """Теги TFS (System.Tags), разделитель «;»."""
+    if not fields:
+        return []
+    raw = fields.get("System.Tags")
+    if raw in (None, ""):
+        return []
+    return [part.strip() for part in str(raw).split(";") if part.strip()]
+
+
 def merged_fields(item: dict[str, Any], compact_data: dict[str, Any] | None = None) -> dict[str, Any]:
     fields = dict(item.get("fields") or {})
     compact_fields = normalize_compact_fields((compact_data or {}).get("fields"))
