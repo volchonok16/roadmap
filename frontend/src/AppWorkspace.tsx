@@ -19,7 +19,12 @@ export default function AppWorkspace({ onLogout }: AppWorkspaceProps) {
   return (
     <div className="app-workspace">
       <div className="app-workspace-content">
-        {view === 'roadmap' ? <RoadmapScreen onLogout={onLogout} /> : <MetricsScreen onLogout={onLogout} />}
+        <div className="app-workspace-pane" hidden={view !== 'roadmap'}>
+          <RoadmapScreen onLogout={onLogout} />
+        </div>
+        <div className="app-workspace-pane" hidden={view !== 'metrics'}>
+          <MetricsScreen onLogout={onLogout} />
+        </div>
       </div>
       <SheetTabs active={view} onChange={setView} />
     </div>

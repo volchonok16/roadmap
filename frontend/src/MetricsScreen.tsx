@@ -6,7 +6,7 @@ import MetricsDashboardGrid from './MetricsDashboardGrid'
 import MetricsChartTypePicker from './MetricsChartTypePicker'
 import MetricsReleaseChart from './MetricsReleaseChart'
 import { readMetricsChartType, writeMetricsChartType, type MetricsChartType } from './metricsChartType'
-import { defaultMetricsGridLayout, writeMetricsGridLayout, type MetricsGridLayoutItem } from './metricsDashboardLayout'
+import { readMetricsGridLayout, writeMetricsGridLayout, type MetricsGridLayoutItem } from './metricsDashboardLayout'
 import {
   fetchMetricsUiPreferences,
   readLocalMetricsUiPreferences,
@@ -56,7 +56,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const [dashboard, setDashboard] = useState<MetricsDashboard | null>(null)
   const [streamBoardId, setStreamBoardId] = useState('')
   const [layoutEditMode, setLayoutEditMode] = useState(false)
-  const [gridLayout, setGridLayout] = useState<MetricsGridLayoutItem[]>(defaultMetricsGridLayout)
+  const [gridLayout, setGridLayout] = useState<MetricsGridLayoutItem[]>(() => readMetricsGridLayout())
   const [uiPrefsReady, setUiPrefsReady] = useState(false)
   const [releaseChartType, setReleaseChartType] = useState<MetricsChartType>(() =>
     readMetricsChartType('release-shipment'),
@@ -106,6 +106,75 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   useEffect(() => {
     writeMetricsStreamBoardId(streamBoardId)
   }, [streamBoardId])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const local = readLocalMetricsUiPreferences()
+      try {
+        const remote = await fetchMetricsUiPreferences()
+        if (cancelled) return
+        if (remote) {
+          setGridLayout(remote.layout)
+          writeMetricsGridLayout(remote.layout)
+          const remoteChart = remote.chartTypes['release-shipment']
+          if (remoteChart) {
+            setReleaseChartType(remoteChart)
+            writeMetricsChartType('release-shipment', remoteChart)
+          }
+        } else {
+          setGridLayout(local.layout)
+          const localChart = local.chartTypes['release-shipment']
+          if (localChart) setReleaseChartType(localChart)
+          void saveMetricsUiPreferences(local).catch(() => {
+            /* session or network */
+          })
+        }
+      } catch {
+        if (!cancelled) {
+          setGridLayout(local.layout)
+          const localChart = local.chartTypes['release-shipment']
+          if (localChart) setReleaseChartType(localChart)
+        }
+      } finally {
+        if (!cancelled) setUiPrefsReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const persistUiPreferences = useCallback(
+    (layout: MetricsGridLayoutItem[], chartType: MetricsChartType) => {
+      writeMetricsGridLayout(layout)
+      writeMetricsChartType('release-shipment', chartType)
+      if (!uiPrefsReady) return
+      void saveMetricsUiPreferences({
+        layout,
+        chartTypes: { 'release-shipment': chartType },
+      }).catch(() => {
+        /* session or network */
+      })
+    },
+    [uiPrefsReady],
+  )
+
+  const handleGridLayoutCommit = useCallback(
+    (layout: MetricsGridLayoutItem[]) => {
+      setGridLayout(layout)
+      persistUiPreferences(layout, releaseChartType)
+    },
+    [persistUiPreferences, releaseChartType],
+  )
+
+  const handleChartTypeChange = useCallback(
+    (chartType: MetricsChartType) => {
+      setReleaseChartType(chartType)
+      persistUiPreferences(gridLayout, chartType)
+    },
+    [gridLayout, persistUiPreferences],
+  )
 
   const logout = async () => {
     try {
@@ -187,10 +256,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
             <MetricsChartTypePicker
               value={releaseChartType}
               disabled={loading}
-              onChange={(chartType) => {
-                setReleaseChartType(chartType)
-                writeMetricsChartType('release-shipment', chartType)
-              }}
+              onChange={handleChartTypeChange}
             />
           ) : null}
         </header>
@@ -247,7 +313,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           editMode={layoutEditMode}
           layout={gridLayout}
           onLayoutChange={setGridLayout}
-          onLayoutCommit={setGridLayout}
+          onLayoutCommit={handleGridLayoutCommit}
         >
           {renderWidget}
         </MetricsDashboardGrid>
