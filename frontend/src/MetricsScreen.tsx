@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { readInitialSelectedBoardIds } from './boardPreferences'
 import { apiFetch, clearSessionId, getJson } from './api'
+import MetricsBarChart, { formatReleaseAxisLabel } from './MetricsBarChart'
+import {
+  buildClosedDeliveriesByRelease,
+  buildClosedDeliveriesByTeam,
+  type MetricBarPoint,
+} from './metricsCharts'
 import { countClosedRequirements, countStreams } from './metricsSummary'
 import { defaultMetricWidgets, type MetricWidgetId } from './metricsWidgets'
 import { normalizeRoadmapItems } from './linkedErrors'
@@ -24,6 +31,11 @@ type MetricsSummary = {
   requirementCount: number
 }
 
+type MetricsCharts = {
+  byRelease: MetricBarPoint[]
+  byTeam: MetricBarPoint[]
+}
+
 type MetricsScreenProps = {
   onLogout: () => void
 }
@@ -38,12 +50,19 @@ function formatMetricValue(value: number | null) {
   return value.toLocaleString('ru-RU')
 }
 
+function shortTeamLabel(label: string) {
+  const trimmed = label.replace(/^Digital Streams\s+/i, 'DS ')
+  return trimmed.length > 14 ? `${trimmed.slice(0, 13)}…` : trimmed
+}
+
 export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [summary, setSummary] = useState<MetricsSummary | null>(null)
+  const [charts, setCharts] = useState<MetricsCharts | null>(null)
   const [generatedAt, setGeneratedAt] = useState<string | null>(null)
   const range = useMemo(() => metricsLoadRange(), [])
+  const highlightBoardIds = useMemo(() => readInitialSelectedBoardIds(), [])
 
   const loadMetrics = useCallback(async () => {
     setLoading(true)
@@ -60,14 +79,19 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         zniCount: items.length,
         requirementCount,
       })
+      setCharts({
+        byRelease: buildClosedDeliveriesByRelease(items),
+        byTeam: buildClosedDeliveriesByTeam(items, highlightBoardIds),
+      })
       setGeneratedAt(roadmap.generatedAt ?? null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить метрики')
       setSummary(null)
+      setCharts(null)
     } finally {
       setLoading(false)
     }
-  }, [range.from, range.to])
+  }, [range.from, range.to, highlightBoardIds])
 
   useEffect(() => {
     void loadMetrics()
@@ -87,6 +111,49 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const widgetValues: Record<MetricWidgetId, number | null> = {
     'streams-count': summary?.streams ?? null,
     'closed-requirements': summary?.closedRequirements ?? null,
+    'team-comparison': summary?.closedRequirements ?? null,
+  }
+
+  const renderWidgetBody = (widgetId: MetricWidgetId, kind: (typeof defaultMetricWidgets)[number]['kind']) => {
+    if (kind === 'kpi') {
+      return (
+        <div className="metrics-widget-body metrics-widget-body-kpi">
+          <span className="metrics-widget-value">{loading ? '…' : formatMetricValue(widgetValues[widgetId])}</span>
+        </div>
+      )
+    }
+    if (kind === 'kpi-release-chart') {
+      return (
+        <div className="metrics-widget-body metrics-widget-body-split">
+          <span className="metrics-widget-value metrics-widget-value-compact">
+            {loading ? '…' : formatMetricValue(widgetValues[widgetId])}
+          </span>
+          <MetricsBarChart
+            series={charts?.byRelease ?? []}
+            loading={loading}
+            emptyLabel="Нет закрытых требований с релизом"
+            formatLabel={formatReleaseAxisLabel}
+            valueSuffix=" треб."
+            variant="release"
+          />
+        </div>
+      )
+    }
+    const teamTotal = charts?.byTeam.reduce((acc, row) => acc + row.value, 0) ?? 0
+    return (
+      <div className="metrics-widget-body metrics-widget-body-chart">
+        <p className="metrics-widget-chart-summary">
+          {loading ? '…' : `${teamTotal.toLocaleString('ru-RU')} закрытых требований по ${charts?.byTeam.length ?? 0} командам`}
+        </p>
+        <MetricsBarChart
+          series={charts?.byTeam ?? []}
+          loading={loading}
+          emptyLabel="Нет закрытых требований по командам"
+          formatLabel={shortTeamLabel}
+          valueSuffix=" треб."
+        />
+      </div>
+    )
   }
 
   return (
@@ -119,7 +186,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           {defaultMetricWidgets.map((widget) => (
             <article
               key={widget.id}
-              className="metrics-widget"
+              className={`metrics-widget metrics-widget-${widget.kind}`}
               style={{ gridColumn: widget.gridColumn, gridRow: widget.gridRow }}
               data-metric-id={widget.id}
             >
@@ -127,21 +194,12 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
                 <h2 className="metrics-widget-title">{widget.title}</h2>
                 <p className="metrics-widget-hint">{widget.hint}</p>
               </header>
-              <div className="metrics-widget-body">
-                <span className="metrics-widget-value">
-                  {loading ? '…' : formatMetricValue(widgetValues[widget.id])}
-                </span>
-                <div className="metrics-widget-chart-placeholder" aria-hidden>
-                  <div className="metrics-widget-chart-bar" style={{ '--fill': '72%' } as CSSProperties} />
-                  <div className="metrics-widget-chart-bar" style={{ '--fill': '48%' } as CSSProperties} />
-                  <div className="metrics-widget-chart-bar" style={{ '--fill': '86%' } as CSSProperties} />
-                </div>
-              </div>
+              {renderWidgetBody(widget.id, widget.kind)}
             </article>
           ))}
         </div>
         <p className="metrics-dashboard-foot">
-          Здесь появятся дополнительные графики; их можно будет перетаскивать и менять размер.
+          В следующих версиях виджеты можно будет перетаскивать и менять размер.
         </p>
       </section>
     </div>
