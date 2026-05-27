@@ -27,7 +27,7 @@ export type MetricsDashboard = {
     streams: number
     zniCount: number
     closedRequirements: number
-    closedWithoutDate: number
+    closedWithoutRelease: number
   }
   periodFrom: string
   periodTo: string
@@ -47,7 +47,10 @@ export function buildHistogramFromShipments(
 ): MetricBarPoint[] {
   const maxBars = options.maxBars ?? 16
   const includeEmptyBars = options.includeEmptyBars ?? true
-  const counts = new Map(shipments.map((row) => [row.releaseLabel, row.count]))
+  const counts = new Map<string, number>()
+  for (const row of shipments) {
+    counts.set(row.releaseLabel, (counts.get(row.releaseLabel) ?? 0) + row.count)
+  }
 
   const ordered = releases
     .map((release) => ({
@@ -60,13 +63,13 @@ export function buildHistogramFromShipments(
   let series = includeEmptyBars ? ordered : ordered.filter((row) => row.value > 0)
   series = series.slice(-maxBars)
 
-  const withoutDate = shipments
-    .filter((row) => row.releaseLabel === 'Closed без даты')
+  const withoutRelease = shipments
+    .filter((row) => row.releaseLabel === 'Без релиза')
     .reduce((acc, row) => acc + row.count, 0)
-  if (withoutDate > 0) {
+  if (withoutRelease > 0) {
     series.push({
-      label: 'Closed без даты',
-      value: withoutDate,
+      label: 'Без релиза',
+      value: withoutRelease,
       sortKey: Number.MAX_SAFE_INTEGER - 1,
     })
   }

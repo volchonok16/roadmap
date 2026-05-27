@@ -91,7 +91,7 @@ class MetricsTotalsOut(ApiModel):
     streams: int = 0
     zni_count: int = 0
     closed_requirements: int = 0
-    closed_without_date: int = 0
+    closed_without_release: int = 0
 
 
 class MetricsDashboardOut(ApiModel):

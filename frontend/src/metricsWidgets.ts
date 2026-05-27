@@ -33,7 +33,7 @@ export const defaultMetricWidgets: MetricWidgetLayout[] = [
     kind: 'release-chart',
     title: 'Отгрузка по релизам',
     hint:
-      'Гистограмма отгрузки стрима по релизам; линия тренда — прогрессия или регрессия к прошлому релизу',
+      'Гистограмма: Closed-требования с релизом из TFS (FieldInRelease). Если релиза нет — по дате Closed',
     gridColumn: '1 / -1',
   },
 ]

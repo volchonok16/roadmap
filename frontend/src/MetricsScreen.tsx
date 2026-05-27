@@ -65,11 +65,12 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     [streamShipments, dashboard?.releases],
   )
 
-  const loadMetrics = useCallback(async () => {
+  const loadMetrics = useCallback(async (rebuildMart = false) => {
     setLoading(true)
     setError(null)
     try {
       const params = new URLSearchParams({ from: range.from, to: range.to })
+      if (rebuildMart) params.set('refresh', 'true')
       const data = await getJson<MetricsDashboard>(`/api/metrics/dashboard?${params}`)
       setDashboard(data)
       setStreamBoardId((prev) => {
@@ -170,9 +171,12 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         <p className="metrics-widget-chart-summary">
           {loading
             ? '…'
-            : `${streamBoardName}: ${shippedTotal.toLocaleString('ru-RU')} отгружено по ${releaseHistogram.filter((r) => r.label !== 'Closed без даты').length} релизам`}
+            : `${streamBoardName}: ${shippedTotal.toLocaleString('ru-RU')} отгружено (Closed + релиз TFS) по ${releaseHistogram.filter((r) => r.label !== 'Без релиза' && r.label !== 'Closed без даты').length} релизам`}
           {dashboard?.cacheBuiltAt
             ? ` · витрина ${new Date(dashboard.cacheBuiltAt).toLocaleString('ru-RU')}`
+            : ''}
+          {dashboard?.totals.closedWithoutRelease
+            ? ` · без релиза: ${dashboard.totals.closedWithoutRelease}`
             : ''}
         </p>
         <MetricsHistogram
@@ -192,8 +196,17 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           <h1 className="app-title">TFS Roadmap</h1>
           <span className="metrics-header-badge">Метрики</span>
           <div className="header-actions metrics-header-actions">
-            <button className="btn-refresh" type="button" onClick={() => void loadMetrics()} disabled={loading}>
+            <button className="btn-refresh" type="button" onClick={() => void loadMetrics(false)} disabled={loading}>
               {loading ? '…' : 'Обновить'}
+            </button>
+            <button
+              className="btn-sync"
+              type="button"
+              title="Пересобрать витрину из БД (после «Выгрузить» на Roadmap)"
+              onClick={() => void loadMetrics(true)}
+              disabled={loading}
+            >
+              {loading ? '…' : 'Пересчитать витрину'}
             </button>
             <button type="button" className="btn-logout" onClick={() => void logout()}>
               Выйти из TFS

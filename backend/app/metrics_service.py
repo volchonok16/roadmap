@@ -15,6 +15,15 @@ CHANGE_TYPE = "Запрос на изменение"
 REQUIREMENT_TYPE = "Требование"
 
 
+def _kanban_column(fields: dict[str, Any] | None) -> str | None:
+    if not fields:
+        return None
+    value = fields.get("System.BoardColumn")
+    if value in (None, ""):
+        return None
+    return str(value).strip()
+
+
 def parse_release_date_from_label(label: str) -> date | None:
     parts = label.split(".")
     if len(parts) < 3:
@@ -100,6 +109,65 @@ def release_window_for_closed_date(
     return None
 
 
+def assign_shipment_release(
+    req_fields: dict[str, Any],
+    req_title: str,
+    parent_fields: dict[str, Any],
+    parent_title: str,
+    closed_day: date | None,
+    schedule: list[tuple[str, date]],
+    period_start: date,
+) -> str | None:
+    """
+    Отгрузка в релиз: в первую очередь поле релиза TFS (FieldInRelease),
+    как на доске. Если поля нет — окно по ClosedDate между датами релизов.
+    """
+    label = _release_label_from_row(req_fields, req_title, parent_fields, parent_title)
+    if label and parse_release_date_from_label(label):
+        return label
+    if closed_day is not None:
+        return release_window_for_closed_date(closed_day, schedule, period_start)
+    return None
+
+
+def _collect_release_labels_from_db(
+    db: Session,
+    period_from: date,
+    period_to: date,
+) -> list[tuple[str, date]]:
+    parents = (
+        db.query(WorkItem)
+        .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
+        .all()
+    )
+    parent_ids = [row.id for row in parents]
+    parent_by_id = {row.id: row for row in parents}
+    requirements: list[WorkItem] = []
+    if parent_ids:
+        requirements = (
+            db.query(WorkItem)
+            .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
+            .all()
+        )
+
+    labels: list[str] = []
+    for parent in parents:
+        label = _release_label_from_row({}, parent.title, parent.fields or {}, parent.title)
+        if label:
+            labels.append(label)
+    for req in requirements:
+        parent = parent_by_id.get(req.parent_id) if req.parent_id else None
+        label = _release_label_from_row(
+            req.fields or {},
+            req.title,
+            parent.fields if parent else {},
+            parent.title if parent else "",
+        )
+        if label:
+            labels.append(label)
+    return collect_release_schedule(labels)
+
+
 def refresh_metrics_shipments(
     db: Session,
     *,
@@ -143,25 +211,32 @@ def refresh_metrics_shipments(
 
     schedule = collect_release_schedule(release_labels)
     counts: dict[tuple[str | None, str, str], int] = {}
-    without_closed_date = 0
+    without_release = 0
 
     for req in requirements:
-        if not is_requirement_closed(req.state, work_item_kanban_column(req.fields)):
+        if not is_requirement_closed(req.state, _kanban_column(req.fields)):
             continue
         closed_day = req.closed_date.date() if req.closed_date else None
         parent = parent_by_id.get(req.parent_id) if req.parent_id else None
+        parent_fields = parent.fields if parent else {}
+        parent_title = parent.title if parent else ""
         board_id = parent.board_id if parent else None
         area_path = parent.area_path if parent else None
         board_name = _board_display_name(board_id, area_path, board_by_id)
 
-        if closed_day is None:
-            without_closed_date += 1
-            key = (board_id, board_name, "Closed без даты")
-            counts[key] = counts.get(key, 0) + 1
-            continue
-
-        release = release_window_for_closed_date(closed_day, schedule, period_from)
+        release = assign_shipment_release(
+            req.fields or {},
+            req.title,
+            parent_fields or {},
+            parent_title,
+            closed_day,
+            schedule,
+            period_from,
+        )
         if not release:
+            without_release += 1
+            key = (board_id, board_name, "Без релиза")
+            counts[key] = counts.get(key, 0) + 1
             continue
         key = (board_id, board_name, release)
         counts[key] = counts.get(key, 0) + 1
@@ -228,18 +303,16 @@ def load_metrics_dashboard(
         for row in facts
     ]
 
-    release_map: dict[str, date | None] = {}
-    for row in facts:
-        if row.release_label not in release_map:
-            release_map[row.release_label] = row.release_date
+    schedule = _collect_release_labels_from_db(db, period_from, period_to)
+    releases = [
+        {"label": label, "date": day.isoformat()}
+        for label, day in schedule
+    ]
 
-    releases = sorted(
-        [{"label": label, "date": day.isoformat() if day else None} for label, day in release_map.items()],
-        key=lambda item: item["date"] or "",
+    closed_total = sum(
+        row.shipment_count for row in facts if row.release_label not in ("Без релиза",)
     )
-
-    closed_total = sum(row.shipment_count for row in facts if row.release_label != "Closed без даты")
-    without_date = sum(row.shipment_count for row in facts if row.release_label == "Closed без даты")
+    without_release = sum(row.shipment_count for row in facts if row.release_label == "Без релиза")
 
     return {
         "boards": [
@@ -260,7 +333,7 @@ def load_metrics_dashboard(
             "streams": len(boards_rows),
             "zni_count": zni_count,
             "closed_requirements": closed_total + without_date,
-            "closed_without_date": without_date,
+            "closed_without_release": without_release,
         },
         "period_from": period_from.isoformat(),
         "period_to": period_to.isoformat(),
