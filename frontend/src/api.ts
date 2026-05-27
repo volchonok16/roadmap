@@ -1,5 +1,25 @@
-const apiBase = import.meta.env.VITE_API_URL ?? ''
 const SESSION_KEY = 'tfsSessionId'
+
+/** Адрес API: из сборки, с подстановкой для pallink.fun, если в бандле остался localhost. */
+function resolveApiBase(): string {
+  const fromEnv = (import.meta.env.VITE_API_URL as string | undefined)?.trim().replace(/\/$/, '') ?? ''
+  if (typeof window === 'undefined') return fromEnv
+
+  const { hostname, protocol } = window.location
+  const isProdHost = hostname === 'pallink.fun' || hostname === 'www.pallink.fun'
+  const envPointsToLocal =
+    !fromEnv || fromEnv.includes('localhost') || fromEnv.includes('127.0.0.1')
+
+  if (isProdHost && envPointsToLocal) {
+    return 'https://api.pallink.fun'
+  }
+  if ((hostname === 'localhost' || hostname === '127.0.0.1') && !fromEnv) {
+    return `${protocol}//${hostname}:8000`
+  }
+  return fromEnv
+}
+
+const apiBase = resolveApiBase()
 
 export function getSessionId(): string | null {
   return sessionStorage.getItem(SESSION_KEY)
@@ -39,13 +59,28 @@ export async function readApiError(response: Response): Promise<string> {
   return text || response.statusText
 }
 
+function formatFetchError(path: string, cause: unknown): Error {
+  const target = apiBase ? `${apiBase}${path}` : path
+  const hint =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'pallink.fun' || window.location.hostname === 'www.pallink.fun')
+      ? ' На сервере: docker compose -f docker-compose.yml -f docker-compose.prod.yml ps и curl http://127.0.0.1:8000/api/health'
+      : ' Локально: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d'
+  const detail = cause instanceof Error ? cause.message : String(cause)
+  return new Error(`Не удалось подключиться к API (${target}).${hint} (${detail})`)
+}
+
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers)
   const sessionId = getSessionId()
   if (sessionId) {
     headers.set('X-Session-Id', sessionId)
   }
-  return fetch(`${apiBase}${path}`, { ...init, headers })
+  try {
+    return await fetch(`${apiBase}${path}`, { ...init, headers })
+  } catch (cause) {
+    throw formatFetchError(path, cause)
+  }
 }
 
 export async function getJson<T>(path: string): Promise<T> {
