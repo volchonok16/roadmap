@@ -3391,7 +3391,7 @@ h2 {
   min-height: 300px;
 }
 
-.metrics-widget-team-chart {
+.metrics-widget-board-chart {
   min-height: 280px;
 }
 
@@ -3529,11 +3529,11 @@ h2 {
   white-space: nowrap;
 }
 
-.metrics-widget-team-chart .metrics-bar-chart-plot {
+.metrics-widget-board-chart .metrics-bar-chart-plot {
   min-height: 160px;
 }
 
-.metrics-widget-team-chart .metrics-bar-chart-col {
+.metrics-widget-board-chart .metrics-bar-chart-col {
   max-width: 96px;
 }
 

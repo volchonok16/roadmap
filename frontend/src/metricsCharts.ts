@@ -53,34 +53,43 @@ export function buildClosedDeliveriesByRelease(items: ChangeRequest[], maxBars =
     .slice(-maxBars)
 }
 
-export function teamLabel(item: ChangeRequest) {
-  return item.boardName?.trim() || item.areaPath?.split('\\').pop() || 'Без команды'
+/** Команда в метриках = доска TFS (board), с которой собираются ЗНИ. */
+export function boardLabel(item: ChangeRequest) {
+  return item.boardName?.trim() || item.areaPath?.split('\\').pop() || 'Без доски'
 }
 
-export function buildClosedDeliveriesByTeam(
+function boardGroupKey(item: ChangeRequest) {
+  if (item.boardId?.trim()) return `board:${item.boardId.trim()}`
+  if (item.areaPath?.trim()) return `area:${item.areaPath.trim()}`
+  return 'none'
+}
+
+export function buildClosedDeliveriesByBoard(
   items: ChangeRequest[],
   highlightBoardIds: string[],
   maxBars = 10,
 ): MetricBarPoint[] {
   const highlightIds = new Set(highlightBoardIds)
-  const counts = new Map<string, { value: number; highlight: boolean }>()
+  const counts = new Map<string, { value: number; highlight: boolean; label: string }>()
   for (const item of items) {
-    const label = teamLabel(item)
+    const key = boardGroupKey(item)
+    const label = boardLabel(item)
     const highlighted = Boolean(item.boardId && highlightIds.has(item.boardId))
-    const prev = counts.get(label) ?? { value: 0, highlight: false }
+    const prev = counts.get(key) ?? { value: 0, highlight: false, label }
     let closedInItem = 0
     for (const requirement of item.requirements) {
       if (isRequirementClosed(requirement)) closedInItem += 1
     }
     if (!closedInItem) continue
-    counts.set(label, {
+    counts.set(key, {
+      label,
       value: prev.value + closedInItem,
       highlight: prev.highlight || highlighted,
     })
   }
-  return [...counts.entries()]
-    .map(([label, meta]) => ({
-      label,
+  return [...counts.values()]
+    .map((meta) => ({
+      label: meta.label,
       value: meta.value,
       highlight: meta.highlight,
       sortKey: meta.value,

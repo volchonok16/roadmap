@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildClosedDeliveriesByRelease, buildClosedDeliveriesByTeam } from './metricsCharts'
+import { buildClosedDeliveriesByBoard, buildClosedDeliveriesByRelease } from './metricsCharts'
 import type { ChangeRequest } from './roadmapTypes'
 
 const baseZni: ChangeRequest = {
@@ -33,8 +33,8 @@ describe('buildClosedDeliveriesByRelease', () => {
   })
 })
 
-describe('buildClosedDeliveriesByTeam', () => {
-  it('groups closed requirements by board and highlights selected teams', () => {
+describe('buildClosedDeliveriesByBoard', () => {
+  it('groups closed requirements by board and highlights selected boards', () => {
     const items: ChangeRequest[] = [
       {
         ...baseZni,
@@ -51,7 +51,7 @@ describe('buildClosedDeliveriesByTeam', () => {
         ],
       },
     ]
-    const series = buildClosedDeliveriesByTeam(items, ['board-a'])
+    const series = buildClosedDeliveriesByBoard(items, ['board-a'])
     expect(series[0].label).toBe('Digital Streams eCommerce')
     expect(series[0].value).toBe(2)
     expect(series.find((row) => row.label === 'Digital Streams Service')?.highlight).toBe(true)

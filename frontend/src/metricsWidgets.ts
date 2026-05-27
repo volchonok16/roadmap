@@ -1,7 +1,7 @@
 /** Идентификаторы виджетов на странице метрик (позже — drag/resize в сетке). */
-export type MetricWidgetId = 'streams-count' | 'closed-requirements' | 'team-comparison'
+export type MetricWidgetId = 'streams-count' | 'closed-requirements' | 'board-comparison'
 
-export type MetricWidgetKind = 'kpi' | 'kpi-release-chart' | 'team-chart'
+export type MetricWidgetKind = 'kpi' | 'kpi-release-chart' | 'board-chart'
 
 export type MetricWidgetLayout = {
   id: MetricWidgetId
@@ -29,10 +29,10 @@ export const defaultMetricWidgets: MetricWidgetLayout[] = [
     gridColumn: 'span 1',
   },
   {
-    id: 'team-comparison',
-    kind: 'team-chart',
-    title: 'Сравнение с командами',
-    hint: 'Закрытые требования по доскам/стримам (выделены ваши команды с Roadmap)',
+    id: 'board-comparison',
+    kind: 'board-chart',
+    title: 'Сравнение досок',
+    hint: 'Команда = доска TFS. Закрытые требования по каждой доске; зелёным — доски, выбранные на Roadmap',
     gridColumn: '1 / -1',
   },
 ]

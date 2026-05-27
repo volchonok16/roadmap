@@ -3,8 +3,8 @@ import { readInitialSelectedBoardIds } from './boardPreferences'
 import { apiFetch, clearSessionId, getJson } from './api'
 import MetricsBarChart, { formatReleaseAxisLabel } from './MetricsBarChart'
 import {
+  buildClosedDeliveriesByBoard,
   buildClosedDeliveriesByRelease,
-  buildClosedDeliveriesByTeam,
   type MetricBarPoint,
 } from './metricsCharts'
 import { countClosedRequirements, countStreams } from './metricsSummary'
@@ -33,7 +33,7 @@ type MetricsSummary = {
 
 type MetricsCharts = {
   byRelease: MetricBarPoint[]
-  byTeam: MetricBarPoint[]
+  byBoard: MetricBarPoint[]
 }
 
 type MetricsScreenProps = {
@@ -50,7 +50,7 @@ function formatMetricValue(value: number | null) {
   return value.toLocaleString('ru-RU')
 }
 
-function shortTeamLabel(label: string) {
+function shortBoardLabel(label: string) {
   const trimmed = label.replace(/^Digital Streams\s+/i, 'DS ')
   return trimmed.length > 14 ? `${trimmed.slice(0, 13)}…` : trimmed
 }
@@ -81,7 +81,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
       })
       setCharts({
         byRelease: buildClosedDeliveriesByRelease(items),
-        byTeam: buildClosedDeliveriesByTeam(items, highlightBoardIds),
+        byBoard: buildClosedDeliveriesByBoard(items, highlightBoardIds),
       })
       setGeneratedAt(roadmap.generatedAt ?? null)
     } catch (err) {
@@ -111,7 +111,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const widgetValues: Record<MetricWidgetId, number | null> = {
     'streams-count': summary?.streams ?? null,
     'closed-requirements': summary?.closedRequirements ?? null,
-    'team-comparison': summary?.closedRequirements ?? null,
+    'board-comparison': summary?.closedRequirements ?? null,
   }
 
   const renderWidgetBody = (widgetId: MetricWidgetId, kind: (typeof defaultMetricWidgets)[number]['kind']) => {
@@ -139,17 +139,19 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         </div>
       )
     }
-    const teamTotal = charts?.byTeam.reduce((acc, row) => acc + row.value, 0) ?? 0
+    const boardTotal = charts?.byBoard.reduce((acc, row) => acc + row.value, 0) ?? 0
     return (
       <div className="metrics-widget-body metrics-widget-body-chart">
         <p className="metrics-widget-chart-summary">
-          {loading ? '…' : `${teamTotal.toLocaleString('ru-RU')} закрытых требований по ${charts?.byTeam.length ?? 0} командам`}
+          {loading
+            ? '…'
+            : `${boardTotal.toLocaleString('ru-RU')} закрытых требований по ${charts?.byBoard.length ?? 0} доскам`}
         </p>
         <MetricsBarChart
-          series={charts?.byTeam ?? []}
+          series={charts?.byBoard ?? []}
           loading={loading}
-          emptyLabel="Нет закрытых требований по командам"
-          formatLabel={shortTeamLabel}
+          emptyLabel="Нет закрытых требований по доскам"
+          formatLabel={shortBoardLabel}
           valueSuffix=" треб."
         />
       </div>
