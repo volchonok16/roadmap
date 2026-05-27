@@ -53,9 +53,9 @@ import {
 import {
   isRequirementLikeColumnVisible,
   linkedErrorColumnLabel,
-  normalizeRequirementColumn,
   requirementColumnLabel,
-  requirementColumnOrder,
+  requirementColumnSortIndex,
+  requirementStatusLaneFraction,
 } from './requirementColumns'
 import type { ChangeRequest, LinkedError, Requirement } from './roadmapTypes'
 import './App.css'
@@ -110,6 +110,9 @@ function readSidebarWidth() {
   const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
   if (Number.isFinite(saved) && saved >= SIDEBAR_MIN_WIDTH && saved <= SIDEBAR_MAX_WIDTH) {
     return saved
+  }
+  if (Number.isFinite(saved)) {
+    localStorage.removeItem(SIDEBAR_WIDTH_KEY)
   }
   return 300
 }
@@ -189,53 +192,6 @@ function visibleRequirements(requirements: Requirement[], hiddenColumnKeys: stri
   return requirements.filter((requirement) =>
     isRequirementLikeColumnVisible(requirement, hiddenColumnKeys),
   )
-}
-
-function requirementStatusSortIndex(state: string) {
-  const normalized = state.trim()
-  const exact = zniColumnOrder.findIndex((item) => item.toLowerCase() === normalized.toLowerCase())
-  if (exact >= 0) return exact
-  const lower = normalized.toLowerCase()
-  if (lower.includes('new')) return 0
-  if (lower.includes('closed') || lower.includes('done') || lower.includes('merged')) return zniColumnOrder.length - 1
-  if (lower.includes('pilot')) return zniColumnOrder.indexOf('Pilot')
-  if (lower.includes('uat') || lower.includes('test')) return zniColumnOrder.indexOf('UAT')
-  if (lower.includes('develop') || lower.includes('code-review')) return zniColumnOrder.indexOf('Development')
-  if (lower.includes('express')) return zniColumnOrder.indexOf('Express Analysis')
-  if (lower.includes('architecture')) return zniColumnOrder.indexOf('Analysis')
-  if (lower.includes('backlog') && lower.includes('analysis')) return zniColumnOrder.indexOf('Analysis Backlog')
-  if (lower.includes('backlog')) return zniColumnOrder.indexOf('Backlog')
-  if (lower.includes('analysis') || lower.includes('analyt') || lower.includes('review')) return zniColumnOrder.indexOf('Analysis')
-  return zniColumnOrder.length
-}
-
-function requirementColumnSortIndex(label: string) {
-  const normalized = normalizeRequirementColumn(label)
-  const exact = requirementColumnOrder.findIndex(
-    (item) => item.toLowerCase() === normalized.toLowerCase(),
-  )
-  if (exact >= 0) return exact
-  const lower = normalized.toLowerCase()
-  if (lower.includes('accept')) return requirementColumnOrder.indexOf('Acceptance')
-  if (lower.includes('merge') && lower.includes('backlog')) return requirementColumnOrder.indexOf('Merge-Backlog')
-  if (lower.includes('merge')) return requirementColumnOrder.indexOf('Merge')
-  if (lower.includes('test') && lower.includes('review')) return requirementColumnOrder.indexOf('Test Review')
-  if (lower.includes('test') && lower.includes('backlog')) return requirementColumnOrder.indexOf('Test Backlog')
-  if (lower === 'test' || lower.startsWith('test ')) return requirementColumnOrder.indexOf('Test')
-  if (lower.includes('code') && lower.includes('backlog')) return requirementColumnOrder.indexOf('Code Review Backlog')
-  if (lower.includes('code') && lower.includes('review')) return requirementColumnOrder.indexOf('Code Review')
-  if (lower.includes('develop') && lower.includes('backlog')) return requirementColumnOrder.indexOf('Development Backlog')
-  if (lower.includes('develop')) return requirementColumnOrder.indexOf('Development')
-  if (lower.includes('requirement') && lower.includes('review')) return requirementColumnOrder.indexOf('Requirement Review')
-  if (lower.includes('full') && lower.includes('analysis')) return requirementColumnOrder.indexOf('Full Analysis')
-  if (lower.includes('backlog')) return requirementColumnOrder.indexOf('Backlog')
-  if (lower.includes('closed')) return requirementColumnOrder.indexOf('Closed')
-  return requirementColumnOrder.length + requirementStatusSortIndex(normalized)
-}
-
-function requirementStatusLaneFraction(label: string) {
-  const maxIdx = Math.max(requirementColumnOrder.length - 1, 1)
-  return clamp(requirementColumnSortIndex(label) / maxIdx, 0, 1)
 }
 
 function zniSpanOnTimeline(
@@ -326,15 +282,14 @@ function errorTimelineBarLayout(
   useUserStartDate: boolean,
   sortAxes: RequirementSortAxes,
   schedulingOverrides: Record<number, SchedulingOverride>,
-  errorsDisplayMode: ErrorsDisplayMode,
 ) {
   const span = zniSpanOnTimeline(parent, fromDate, toDate, useUserStartDate, schedulingOverrides[parent.id])
   const label = errorColumnLabel(error)
-  const laneByStatus = sortAxes.byStatus && errorsDisplayMode === 'merged'
-  if (laneByStatus) {
+  if (sortAxes.byStatus) {
     const fraction = requirementStatusLaneFraction(label)
-    const pillWidth = Math.max(span.width * 0.12, 5)
-    const innerLeft = Math.max(0, span.width * fraction * 0.86)
+    const pillWidth = clamp(span.width * 0.2, 8, Math.min(span.width * 0.85, 22))
+    const avail = Math.max(span.width - pillWidth, 0)
+    const innerLeft = fraction >= 0.999 ? avail : fraction * avail
     return { span, left: span.left + innerLeft, width: pillWidth, byStatus: true as const, label }
   }
   return {
@@ -780,7 +735,12 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth))
+    const clamped = clamp(sidebarWidth, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+    if (clamped !== sidebarWidth) {
+      setSidebarWidth(clamped)
+      return
+    }
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped))
   }, [sidebarWidth])
 
   useEffect(() => {
@@ -1513,7 +1473,6 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
         useUserStartDate,
         requirementSortAxes,
         schedulingOverrides,
-        errorsDisplayMode,
       )
       return (
         <article className="sync-row sync-row-err roadmap-row roadmap-row-err">

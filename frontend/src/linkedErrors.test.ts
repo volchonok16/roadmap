@@ -71,6 +71,7 @@ describe('visibleLinkedErrors', () => {
     expect(visibleLinkedErrors(errors, ['col::closed']).map((row) => row.id)).toEqual([1])
     expect(linkedErrorColumnLabel(errors[1])).toBe('Closed')
   })
+
 })
 
 describe('isLinkedError', () => {
