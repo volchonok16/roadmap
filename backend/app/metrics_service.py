@@ -332,7 +332,7 @@ def load_metrics_dashboard(
         "totals": {
             "streams": len(boards_rows),
             "zni_count": zni_count,
-            "closed_requirements": closed_total + without_date,
+            "closed_requirements": closed_total + without_release,
             "closed_without_release": without_release,
         },
         "period_from": period_from.isoformat(),
