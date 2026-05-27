@@ -1,0 +1,149 @@
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { apiFetch, clearSessionId, getJson } from './api'
+import { countClosedRequirements, countStreams } from './metricsSummary'
+import { defaultMetricWidgets, type MetricWidgetId } from './metricsWidgets'
+import { normalizeRoadmapItems } from './linkedErrors'
+import type { ChangeRequest } from './roadmapTypes'
+import './App.css'
+
+type Board = {
+  id: string
+  name: string
+}
+
+type RoadmapResponse = {
+  boards: Board[]
+  items: ChangeRequest[]
+  generatedAt: string
+}
+
+type MetricsSummary = {
+  streams: number
+  closedRequirements: number
+  zniCount: number
+  requirementCount: number
+}
+
+type MetricsScreenProps = {
+  onLogout: () => void
+}
+
+function metricsLoadRange() {
+  const year = new Date().getFullYear()
+  return { from: `${year - 2}-01-01`, to: `${year + 2}-12-31` }
+}
+
+function formatMetricValue(value: number | null) {
+  if (value === null) return '—'
+  return value.toLocaleString('ru-RU')
+}
+
+export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [summary, setSummary] = useState<MetricsSummary | null>(null)
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
+  const range = useMemo(() => metricsLoadRange(), [])
+
+  const loadMetrics = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const boards = await getJson<Board[]>('/api/boards')
+      const params = new URLSearchParams({ from: range.from, to: range.to })
+      const roadmap = await getJson<RoadmapResponse>(`/api/roadmap?${params}`)
+      const items = normalizeRoadmapItems(roadmap.items ?? [])
+      const requirementCount = items.reduce((acc, item) => acc + item.requirements.length, 0)
+      setSummary({
+        streams: countStreams(boards.length),
+        closedRequirements: countClosedRequirements(items),
+        zniCount: items.length,
+        requirementCount,
+      })
+      setGeneratedAt(roadmap.generatedAt ?? null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить метрики')
+      setSummary(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [range.from, range.to])
+
+  useEffect(() => {
+    void loadMetrics()
+  }, [loadMetrics])
+
+  const logout = async () => {
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      /* ignore */
+    } finally {
+      clearSessionId()
+      onLogout()
+    }
+  }
+
+  const widgetValues: Record<MetricWidgetId, number | null> = {
+    'streams-count': summary?.streams ?? null,
+    'closed-requirements': summary?.closedRequirements ?? null,
+  }
+
+  return (
+    <div className="app-shell metrics-shell">
+      <header className="app-header metrics-header">
+        <div className="app-header-row">
+          <h1 className="app-title">TFS Roadmap</h1>
+          <span className="metrics-header-badge">Метрики</span>
+          <div className="header-actions metrics-header-actions">
+            <button className="btn-refresh" type="button" onClick={() => void loadMetrics()} disabled={loading}>
+              {loading ? '…' : 'Обновить'}
+            </button>
+            <button type="button" className="btn-logout" onClick={() => void logout()}>
+              Выйти из TFS
+            </button>
+          </div>
+        </div>
+        <p className="metrics-header-note">
+          Сводка по данным TFS за период {range.from} — {range.to}
+          {generatedAt ? ` · обновлено ${new Date(generatedAt).toLocaleString('ru-RU')}` : ''}
+          {summary
+            ? ` · ${summary.zniCount} ЗНИ, ${summary.requirementCount} требований`
+            : ''}
+        </p>
+      </header>
+
+      <section className="metrics-panel">
+        {error ? <div className="error">{error}</div> : null}
+        <div className="metrics-dashboard" aria-busy={loading}>
+          {defaultMetricWidgets.map((widget) => (
+            <article
+              key={widget.id}
+              className="metrics-widget"
+              style={{ gridColumn: widget.gridColumn, gridRow: widget.gridRow }}
+              data-metric-id={widget.id}
+            >
+              <header className="metrics-widget-head">
+                <h2 className="metrics-widget-title">{widget.title}</h2>
+                <p className="metrics-widget-hint">{widget.hint}</p>
+              </header>
+              <div className="metrics-widget-body">
+                <span className="metrics-widget-value">
+                  {loading ? '…' : formatMetricValue(widgetValues[widget.id])}
+                </span>
+                <div className="metrics-widget-chart-placeholder" aria-hidden>
+                  <div className="metrics-widget-chart-bar" style={{ '--fill': '72%' } as CSSProperties} />
+                  <div className="metrics-widget-chart-bar" style={{ '--fill': '48%' } as CSSProperties} />
+                  <div className="metrics-widget-chart-bar" style={{ '--fill': '86%' } as CSSProperties} />
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+        <p className="metrics-dashboard-foot">
+          Здесь появятся дополнительные графики; их можно будет перетаскивать и менять размер.
+        </p>
+      </section>
+    </div>
+  )
+}

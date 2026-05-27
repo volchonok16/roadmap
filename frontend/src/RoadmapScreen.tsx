@@ -1761,7 +1761,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   )
 
   return (
-    <main className="app-shell" style={shellStyle}>
+    <div className="app-shell" style={shellStyle}>
       <header className="app-header">
         <div className="app-header-row">
           <h1 className="app-title">TFS Roadmap</h1>
@@ -2032,7 +2032,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           releaseMarkers={visibleReleaseMarkers}
         />
       </section>
-    </main>
+    </div>
   )
 }
 

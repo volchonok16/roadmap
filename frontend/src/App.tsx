@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { applySessionFromUrl, clearSessionId, getJson, getSessionId } from './api'
 import Login from './Login'
-import RoadmapScreen from './RoadmapScreen'
+import AppWorkspace from './AppWorkspace'
 import './App.css'
 
 function App() {
@@ -45,7 +45,7 @@ function App() {
     )
   }
 
-  return <RoadmapScreen onLogout={() => setAuthenticated(false)} />
+  return <AppWorkspace onLogout={() => setAuthenticated(false)} />
 }
 
 export default App
