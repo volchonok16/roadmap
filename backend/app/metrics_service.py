@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.board_mapping import streams_board_display_name
 from app.models import Board, MetricsShipment, WorkItem
-from app.release_fields import release_label_from_text, work_item_release_label
+from app.release_fields import work_item_release_label
 from app.requirement_status import is_requirement_closed
 CHANGE_TYPE = "Запрос на изменение"
 REQUIREMENT_TYPE = "Требование"
@@ -54,30 +54,31 @@ def _parent_period_filter(date_from: date, date_to: date):
     )
 
 
+def _board_key(board_id: str | None, area_path: str | None) -> str | None:
+    if board_id:
+        return board_id
+    if area_path:
+        return f"area:{area_path}"
+    return None
+
+
 def _board_display_name(board_id: str | None, area_path: str | None, board_by_id: dict[str, Board]) -> str:
     if board_id and board_id in board_by_id:
         return board_by_id[board_id].name
     if area_path:
+        area_key = f"area:{area_path}"
+        if area_key in board_by_id:
+            return board_by_id[area_key].name
         return streams_board_display_name(area_path)
     return "Без доски"
 
 
-def _release_label_from_row(
-    req_fields: dict[str, Any],
-    req_title: str,
-    parent_fields: dict[str, Any],
-    parent_title: str,
-) -> str | None:
-    direct = work_item_release_label(req_fields)
-    if direct:
-        return direct
-    from_title = release_label_from_text(req_title)
-    if from_title:
-        return from_title
-    parent_release = work_item_release_label(parent_fields)
-    if parent_release:
-        return parent_release
-    return release_label_from_text(parent_title)
+def _linked_release_label(req_fields: dict[str, Any], parent_fields: dict[str, Any]) -> str | None:
+    """Релиз из полей TFS: сначала на требовании, затем на родительском ЗНИ."""
+    label = work_item_release_label(req_fields)
+    if label:
+        return label
+    return work_item_release_label(parent_fields)
 
 
 def collect_release_schedule(labels: list[str]) -> list[tuple[str, date]]:
@@ -109,24 +110,14 @@ def release_window_for_closed_date(
     return None
 
 
-def assign_shipment_release(
-    req_fields: dict[str, Any],
-    req_title: str,
-    parent_fields: dict[str, Any],
-    parent_title: str,
-    closed_day: date | None,
-    schedule: list[tuple[str, date]],
-    period_start: date,
-) -> str | None:
+def assign_shipment_release(req_fields: dict[str, Any], parent_fields: dict[str, Any]) -> str | None:
     """
-    Отгрузка в релиз: в первую очередь поле релиза TFS (FieldInRelease),
-    как на доске. Если поля нет — окно по ClosedDate между датами релизов.
+    Отгрузка только при явной привязке к релизу в TFS (FieldInRelease и аналоги).
+    Дата Closed без поля релиза не подставляет релиз автоматически.
     """
-    label = _release_label_from_row(req_fields, req_title, parent_fields, parent_title)
+    label = _linked_release_label(req_fields, parent_fields)
     if label and parse_release_date_from_label(label):
         return label
-    if closed_day is not None:
-        return release_window_for_closed_date(closed_day, schedule, period_start)
     return None
 
 
@@ -152,17 +143,12 @@ def _collect_release_labels_from_db(
 
     labels: list[str] = []
     for parent in parents:
-        label = _release_label_from_row({}, parent.title, parent.fields or {}, parent.title)
+        label = _linked_release_label({}, parent.fields or {})
         if label:
             labels.append(label)
     for req in requirements:
         parent = parent_by_id.get(req.parent_id) if req.parent_id else None
-        label = _release_label_from_row(
-            req.fields or {},
-            req.title,
-            parent.fields if parent else {},
-            parent.title if parent else "",
-        )
+        label = _linked_release_label(req.fields or {}, parent.fields if parent else {})
         if label:
             labels.append(label)
     return collect_release_schedule(labels)
@@ -198,41 +184,33 @@ def refresh_metrics_shipments(
 
     release_labels: list[str] = []
     for parent in parents:
-        label = _release_label_from_row({}, parent.title, parent.fields or {}, parent.title)
+        label = _linked_release_label({}, parent.fields or {})
         if label:
             release_labels.append(label)
     for req in requirements:
         parent = parent_by_id.get(req.parent_id) if req.parent_id else None
         parent_fields = parent.fields if parent else {}
-        parent_title = parent.title if parent else ""
-        label = _release_label_from_row(req.fields or {}, req.title, parent_fields or {}, parent_title)
+        label = _linked_release_label(req.fields or {}, parent_fields or {})
         if label:
             release_labels.append(label)
 
-    schedule = collect_release_schedule(release_labels)
     counts: dict[tuple[str | None, str, str], int] = {}
     without_release = 0
 
     for req in requirements:
         if not is_requirement_closed(req.state, _kanban_column(req.fields)):
             continue
-        closed_day = req.closed_date.date() if req.closed_date else None
         parent = parent_by_id.get(req.parent_id) if req.parent_id else None
         parent_fields = parent.fields if parent else {}
-        parent_title = parent.title if parent else ""
-        board_id = parent.board_id if parent else None
         area_path = parent.area_path if parent else None
-        board_name = _board_display_name(board_id, area_path, board_by_id)
-
-        release = assign_shipment_release(
-            req.fields or {},
-            req.title,
-            parent_fields or {},
-            parent_title,
-            closed_day,
-            schedule,
-            period_from,
+        board_id = _board_key(parent.board_id if parent else None, area_path)
+        board_name = _board_display_name(
+            parent.board_id if parent else None,
+            area_path,
+            board_by_id,
         )
+
+        release = assign_shipment_release(req.fields or {}, parent_fields or {})
         if not release:
             without_release += 1
             key = (board_id, board_name, "Без релиза")

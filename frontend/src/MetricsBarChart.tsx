@@ -42,11 +42,11 @@ export default function MetricsBarChart({
     >
       <div className="metrics-bar-chart-plot">
         {series.map((item) => {
-          const heightPct = Math.max((item.value / maxValue) * 100, 6)
+          const heightPct = item.value === 0 ? 4 : Math.max((item.value / maxValue) * 100, 6)
           return (
             <div
               key={item.label}
-              className={`metrics-bar-chart-col ${item.highlight ? 'is-highlight' : ''}`}
+              className={`metrics-bar-chart-col ${item.highlight ? 'is-highlight' : ''} ${item.value === 0 ? 'is-empty' : ''}`}
             >
               <span className="metrics-bar-chart-value" title={`${item.value}${valueSuffix}`}>
                 {item.value}

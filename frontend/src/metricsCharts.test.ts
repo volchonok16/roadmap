@@ -62,7 +62,7 @@ describe('releaseWindowForClosedDate', () => {
 })
 
 describe('buildShippedTasksByRelease', () => {
-  it('counts closed requirements by release window from closedDate', () => {
+  it('counts closed requirements only by linked TFS release field', () => {
     const items: ChangeRequest[] = [
       {
         ...baseZni,
@@ -85,15 +85,14 @@ describe('buildShippedTasksByRelease', () => {
             id: 3,
             title: 'C',
             state: 'Closed',
-            release: '2026.06.16.0-R',
             closedDate: '2026-06-20T12:00:00Z',
           },
         ],
       },
     ]
     const series = buildShippedTasksByRelease(items, localDate('2026-01-01'), { includeEmptyBars: false })
-    expect(series.find((row) => row.label === '2026.06.02.0-R')?.value).toBe(1)
     expect(series.find((row) => row.label === '2026.06.16.0-R')?.value).toBe(2)
-    expect(series.find((row) => row.label === '2026.06.30.0-R')).toBeUndefined()
+    expect(series.find((row) => row.label === 'Без релиза')?.value).toBe(1)
+    expect(series.find((row) => row.label === '2026.06.02.0-R')).toBeUndefined()
   })
 })

@@ -91,4 +91,16 @@ export async function getJson<T>(path: string): Promise<T> {
   return response.json()
 }
 
+export async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await apiFetch(path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    throw new Error(await readApiError(response))
+  }
+  return response.json()
+}
+
 export { apiBase }

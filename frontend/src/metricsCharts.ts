@@ -1,8 +1,4 @@
-import {
-  parseReleaseDateFromLabel,
-  parseReleaseLabelFromTitle,
-  type UpcomingRelease,
-} from './releaseUtils'
+import { parseReleaseDateFromLabel, type UpcomingRelease } from './releaseUtils'
 import { isRequirementClosed } from './metricsSummary'
 import type { ChangeRequest, Requirement } from './roadmapTypes'
 
@@ -30,12 +26,16 @@ function releaseLabelFromItem(item: ChangeRequest, requirement?: Requirement) {
   if (requirement) {
     const direct = requirement.release?.trim()
     if (direct) return direct
-    const fromTitle = parseReleaseLabelFromTitle(requirement.title)
-    if (fromTitle) return fromTitle
   }
   const parentRelease = item.release?.trim()
   if (parentRelease) return parentRelease
-  return parseReleaseLabelFromTitle(item.title)
+  return null
+}
+
+function linkedReleaseLabel(item: ChangeRequest, requirement: Requirement): string | null {
+  const label = releaseLabelFromItem(item, requirement)
+  if (!label) return null
+  return parseReleaseDateFromLabel(label) ? label : null
 }
 
 /** Все уникальные релизы из ЗНИ и требований, отсортированные по дате. */
@@ -61,11 +61,7 @@ export function collectReleaseSchedule(items: ChangeRequest[]): ReleaseScheduleE
     .sort((left, right) => left.date.getTime() - right.date.getTime())
 }
 
-/**
- * Отгрузка в релиз R_i: требования в Closed, у которых closedDate попадает
- * в интервал (дата предыдущего релиза, дата R_i].
- * Так учитывается ранний перевод в Closed перед датой релиза (регресс и настройки).
- */
+/** @deprecated Окно по дате Closed; в метриках отгрузка считается только по полю релиза TFS. */
 export function releaseWindowForClosedDate(
   closedAt: Date,
   schedule: ReleaseScheduleEntry[],
@@ -109,18 +105,19 @@ export function buildShippedTasksByRelease(
   if (!schedule.length) return []
 
   const counts = new Map(schedule.map((entry) => [entry.label, 0]))
-  let withoutClosedDate = 0
+  let withoutRelease = 0
 
   for (const item of items) {
     for (const requirement of item.requirements) {
       if (!isRequirementClosed(requirement)) continue
-      const closedAt = parseClosedDate(requirement.closedDate)
-      if (!closedAt) {
-        withoutClosedDate += 1
+      const release = linkedReleaseLabel(item, requirement)
+      if (!release) {
+        withoutRelease += 1
         continue
       }
-      const release = releaseWindowForClosedDate(closedAt, schedule, periodStart)
-      if (!release) continue
+      if (!counts.has(release)) {
+        counts.set(release, 0)
+      }
       counts.set(release, (counts.get(release) ?? 0) + 1)
     }
   }
@@ -137,10 +134,10 @@ export function buildShippedTasksByRelease(
 
   series = series.slice(-maxBars)
 
-  if (withoutClosedDate > 0) {
+  if (withoutRelease > 0) {
     series.push({
-      label: 'Closed без даты',
-      value: withoutClosedDate,
+      label: 'Без релиза',
+      value: withoutRelease,
       sortKey: Number.MAX_SAFE_INTEGER - 1,
     })
   }

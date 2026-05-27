@@ -16,7 +16,8 @@ from app.auth_service import (
     default_app_url,
     login_with_auth,
 )
-from app.auth_sessions import delete_session, get_session
+from app.account_key import fallback_account_key, resolve_account_key
+from app.auth_sessions import delete_session, get_session, update_session
 from app.board_mapping import streams_board_display_name
 from app.config import settings
 from app.sync_service import (
@@ -27,7 +28,14 @@ from app.sync_service import (
     work_item_tags,
 )
 from app.db import Base, SessionLocal, engine, get_db
+from app.metrics_preferences import default_metrics_ui_preferences, normalize_metrics_ui_preferences
 from app.metrics_service import load_metrics_dashboard, refresh_metrics_shipments
+from app.user_preferences_service import (
+    METRICS_UI_PREFERENCE_KEY,
+    read_user_preference,
+    require_account_key,
+    write_user_preference,
+)
 from app.models import Board, SyncRun, WorkItem
 from app.board_kanban import kanban_columns_from_board_raw
 from app.scheduling_push import push_scheduling_items
@@ -38,6 +46,8 @@ from app.schemas import (
     ChangeRequestOut,
     LinkedErrorOut,
     MetricsDashboardOut,
+    MetricsUiPreferencesIn,
+    MetricsUiPreferencesOut,
     RequirementOut,
     RoadmapOut,
     SchedulingPushIn,
@@ -105,6 +115,27 @@ def require_tfs_auth(x_session_id: str | None = Header(default=None, alias="X-Se
     if auth is None:
         raise HTTPException(status_code=401, detail="TFS session is missing. Sign in on the login form.")
     return auth
+
+
+async def require_tfs_auth_with_account(
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+) -> TfsAuth:
+    auth = require_tfs_auth(x_session_id)
+    if auth.account_key:
+        return auth
+    client = TfsClient(auth)
+    try:
+        account_key = await resolve_account_key(client, auth)
+    except Exception:
+        account_key = fallback_account_key(auth)
+    finally:
+        await client.close()
+    from dataclasses import replace
+
+    resolved = replace(auth, account_key=account_key)
+    if x_session_id:
+        update_session(x_session_id, resolved)
+    return resolved
 
 
 @app.get("/api/health")
@@ -427,6 +458,32 @@ async def push_scheduling(
         first_error = next((row.error for row in out if row.error), "TFS update failed")
         raise HTTPException(status_code=502, detail=first_error)
     return SchedulingPushOut(results=out, success_count=success_count)
+
+
+@app.get("/api/user/metrics-preferences", response_model=MetricsUiPreferencesOut)
+def get_metrics_ui_preferences(
+    auth: TfsAuth = Depends(require_tfs_auth_with_account),
+    db: Session = Depends(get_db),
+) -> MetricsUiPreferencesOut:
+    account_key = require_account_key(auth)
+    stored = read_user_preference(db, account_key, METRICS_UI_PREFERENCE_KEY)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Metrics preferences not found")
+    normalized = normalize_metrics_ui_preferences(stored)
+    return MetricsUiPreferencesOut.model_validate(normalized)
+
+
+@app.put("/api/user/metrics-preferences", response_model=MetricsUiPreferencesOut)
+def put_metrics_ui_preferences(
+    body: MetricsUiPreferencesIn,
+    auth: TfsAuth = Depends(require_tfs_auth_with_account),
+    db: Session = Depends(get_db),
+) -> MetricsUiPreferencesOut:
+    account_key = require_account_key(auth)
+    payload = normalize_metrics_ui_preferences(body.model_dump(by_alias=False))
+    saved = write_user_preference(db, account_key, METRICS_UI_PREFERENCE_KEY, payload)
+    normalized = normalize_metrics_ui_preferences(saved)
+    return MetricsUiPreferencesOut.model_validate(normalized)
 
 
 @app.get("/api/metrics/dashboard", response_model=MetricsDashboardOut)

@@ -105,6 +105,28 @@ class MetricsDashboardOut(ApiModel):
     cache_built_at: datetime | None = None
 
 
+class MetricsGridLayoutItemOut(ApiModel):
+    i: str
+    x: int
+    y: int
+    w: int
+    h: int
+    min_w: int | None = None
+    min_h: int | None = None
+    max_w: int | None = None
+    max_h: int | None = None
+
+
+class MetricsUiPreferencesOut(ApiModel):
+    layout: list[MetricsGridLayoutItemOut]
+    chart_types: dict[str, Literal["line", "bar", "area"]] = Field(default_factory=dict)
+
+
+class MetricsUiPreferencesIn(ApiModel):
+    layout: list[MetricsGridLayoutItemOut]
+    chart_types: dict[str, Literal["line", "bar", "area"]] = Field(default_factory=dict)
+
+
 class TfsAuthIn(ApiModel):
     base_url: str | None = None
     project: str

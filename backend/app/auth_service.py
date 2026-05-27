@@ -1,10 +1,12 @@
 import html
 import json
+from dataclasses import replace
 from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import HTTPException
 
+from app.account_key import resolve_account_key
 from app.auth_sessions import create_session
 from app.config import settings
 from app.http_auth import auth_attempts
@@ -87,7 +89,9 @@ async def resolve_working_auth(auth: TfsAuth) -> tuple[TfsAuth, str]:
         try:
             ok, status = await probe_tfs(client, attempt.auth)
             if ok:
-                return attempt.auth, attempt.label
+                account_key = await resolve_account_key(client, attempt.auth)
+                resolved_auth = replace(attempt.auth, account_key=account_key)
+                return resolved_auth, attempt.label
             errors.append(f"{attempt.label}: HTTP {status or '?'}")
         except httpx.HTTPError as exc:
             errors.append(f"{attempt.label}: {exc}")

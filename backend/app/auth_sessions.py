@@ -26,3 +26,9 @@ def delete_session(session_id: str | None) -> None:
         return
     with _lock:
         _sessions.pop(session_id, None)
+
+
+def update_session(session_id: str, auth: TfsAuth) -> None:
+    with _lock:
+        if session_id in _sessions:
+            _sessions[session_id] = auth

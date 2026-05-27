@@ -17,6 +17,7 @@ class TfsAuth:
     password: str | None = None
     cookie: str | None = None
     extra_headers: dict[str, str] | None = None
+    account_key: str | None = None
 
     def has_credentials(self) -> bool:
         return bool(

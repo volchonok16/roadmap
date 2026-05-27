@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { readInitialSelectedBoardIds } from './boardPreferences'
+import { readInitialSelectedBoardIds, readPinnedBoardId } from './boardPreferences'
+import MetricsBoardPicker from './MetricsBoardPicker'
 import { apiFetch, clearSessionId, getJson } from './api'
-import MetricsBarChart from './MetricsBarChart'
-import MetricsHistogram from './MetricsHistogram'
+import MetricsDashboardGrid from './MetricsDashboardGrid'
+import MetricsChartTypePicker from './MetricsChartTypePicker'
+import MetricsReleaseChart from './MetricsReleaseChart'
+import { readMetricsChartType, writeMetricsChartType, type MetricsChartType } from './metricsChartType'
+import { defaultMetricsGridLayout, writeMetricsGridLayout, type MetricsGridLayoutItem } from './metricsDashboardLayout'
+import {
+  fetchMetricsUiPreferences,
+  readLocalMetricsUiPreferences,
+  saveMetricsUiPreferences,
+} from './metricsUserSettings'
 import { readMetricsStreamBoardId, writeMetricsStreamBoardId } from './metricsBoard'
 import {
   buildHistogramFromShipments,
-  formatReleaseFromDashboard,
   shipmentsForBoard,
   type MetricsDashboard,
 } from './metricsDashboard'
@@ -25,6 +33,8 @@ function metricsLoadRange() {
 function readInitialMetricsBoardId(boards: MetricsDashboard['boards']) {
   const saved = readMetricsStreamBoardId()
   if (saved && boards.some((board) => board.id === saved)) return saved
+  const pinned = readPinnedBoardId()
+  if (pinned && boards.some((board) => board.id === pinned)) return pinned
   const fromRoadmap = readInitialSelectedBoardIds().find((id) => boards.some((board) => board.id === id))
   if (fromRoadmap) return fromRoadmap
   return ''
@@ -35,31 +45,35 @@ function formatMetricValue(value: number | null) {
   return value.toLocaleString('ru-RU')
 }
 
+const widgetMeta = Object.fromEntries(defaultMetricWidgets.map((widget) => [widget.id, widget])) as Record<
+  MetricWidgetId,
+  (typeof defaultMetricWidgets)[number]
+>
+
 export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dashboard, setDashboard] = useState<MetricsDashboard | null>(null)
   const [streamBoardId, setStreamBoardId] = useState('')
+  const [layoutEditMode, setLayoutEditMode] = useState(false)
+  const [gridLayout, setGridLayout] = useState<MetricsGridLayoutItem[]>(defaultMetricsGridLayout)
+  const [uiPrefsReady, setUiPrefsReady] = useState(false)
+  const [releaseChartType, setReleaseChartType] = useState<MetricsChartType>(() =>
+    readMetricsChartType('release-shipment'),
+  )
   const range = useMemo(() => metricsLoadRange(), [])
 
+  const boards = dashboard?.boards ?? []
+
   const streamShipments = useMemo(
-    () => shipmentsForBoard(dashboard?.shipments ?? [], streamBoardId || null),
-    [dashboard?.shipments, streamBoardId],
+    () => shipmentsForBoard(dashboard?.shipments ?? [], streamBoardId || null, boards),
+    [dashboard?.shipments, streamBoardId, boards],
   )
 
   const releaseHistogram = useMemo(
     () =>
       buildHistogramFromShipments(streamShipments, dashboard?.releases ?? [], {
-        maxBars: 16,
-        includeEmptyBars: true,
-      }),
-    [streamShipments, dashboard?.releases],
-  )
-
-  const releaseChartCompact = useMemo(
-    () =>
-      buildHistogramFromShipments(streamShipments, dashboard?.releases ?? [], {
-        maxBars: 8,
+        maxBars: 24,
         includeEmptyBars: false,
       }),
     [streamShipments, dashboard?.releases],
@@ -105,40 +119,24 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   }
 
   const streamBoardName =
-    streamBoardId
-      ? dashboard?.boards.find((board) => board.id === streamBoardId)?.name ?? 'Доска'
-      : 'Все доски'
+    streamBoardId ? boards.find((board) => board.id === streamBoardId)?.name ?? 'Доска' : 'Все доски'
 
   const shippedTotal = releaseHistogram
-    .filter((row) => row.label !== 'Closed без даты')
+    .filter((row) => row.label !== 'Без релиза' && row.label !== 'Closed без даты')
     .reduce((acc, row) => acc + row.value, 0)
 
   const widgetValues: Record<MetricWidgetId, number | null> = {
     'streams-count': dashboard?.totals.streams ?? null,
-    'closed-requirements': streamBoardId
-      ? shippedTotal
-      : dashboard?.totals.closedRequirements ?? null,
     'release-shipment': shippedTotal,
   }
 
-  const streamBoardSelect = (
-    <label className="metrics-stream-board-picker">
-      <span className="metrics-stream-board-picker-label">Стрим (доска)</span>
-      <select
-        className="metrics-stream-board-select filter-bar-input"
-        value={streamBoardId}
-        disabled={loading || !dashboard?.boards.length}
-        aria-label="Доска стрима для гистограммы"
-        onChange={(event) => setStreamBoardId(event.target.value)}
-      >
-        <option value="">Все доски</option>
-        {(dashboard?.boards ?? []).map((board) => (
-          <option key={board.id} value={board.id}>
-            {board.name}
-          </option>
-        ))}
-      </select>
-    </label>
+  const streamBoardPicker = (
+    <MetricsBoardPicker
+      boards={boards}
+      value={streamBoardId}
+      disabled={loading}
+      onChange={setStreamBoardId}
+    />
   )
 
   const renderWidgetBody = (widgetId: MetricWidgetId, kind: (typeof defaultMetricWidgets)[number]['kind']) => {
@@ -149,53 +147,73 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         </div>
       )
     }
-    if (kind === 'kpi-release-chart') {
-      return (
-        <div className="metrics-widget-body metrics-widget-body-split">
-          <span className="metrics-widget-value metrics-widget-value-compact">
-            {loading ? '…' : formatMetricValue(widgetValues[widgetId])}
-          </span>
-          <MetricsBarChart
-            series={releaseChartCompact}
-            loading={loading}
-            emptyLabel="Нет отгрузки по выбранной доске"
-            formatLabel={formatReleaseFromDashboard}
-            valueSuffix=" треб."
-            variant="release"
-          />
-        </div>
-      )
-    }
     return (
       <div className="metrics-widget-body metrics-widget-body-chart">
-        <p className="metrics-widget-chart-summary">
+        <p className="metrics-widget-chart-summary metrics-widget-no-drag">
           {loading
             ? '…'
-            : `${streamBoardName}: ${shippedTotal.toLocaleString('ru-RU')} отгружено (Closed + релиз TFS) по ${releaseHistogram.filter((r) => r.label !== 'Без релиза' && r.label !== 'Closed без даты').length} релизам`}
+            : `${streamBoardName}: ${shippedTotal.toLocaleString('ru-RU')} отгружено по ${releaseHistogram.length} релизам`}
           {dashboard?.cacheBuiltAt
             ? ` · витрина ${new Date(dashboard.cacheBuiltAt).toLocaleString('ru-RU')}`
             : ''}
-          {dashboard?.totals.closedWithoutRelease
-            ? ` · без релиза: ${dashboard.totals.closedWithoutRelease}`
-            : ''}
         </p>
-        <MetricsHistogram
+        <MetricsReleaseChart
+          chartType={releaseChartType}
           series={releaseHistogram}
           loading={loading}
-          emptyLabel="Нет данных в витрине для выбранной доски"
+          emptyLabel={
+            streamBoardId
+              ? 'Нет отгрузки по этой доске — нажмите «Пересчитать витрину» после выгрузки из TFS'
+              : 'Нет данных в витрине'
+          }
           valueSuffix=" треб."
         />
       </div>
     )
   }
 
+  const renderWidget = (widgetId: MetricWidgetId) => {
+    const widget = widgetMeta[widgetId]
+    return (
+      <article className={`metrics-widget metrics-widget-${widget.kind}`} data-metric-id={widget.id}>
+        <header
+          className={`metrics-widget-head ${layoutEditMode ? 'metrics-widget-drag-handle' : ''} ${widget.kind === 'release-chart' ? 'metrics-widget-head-chart' : ''}`}
+        >
+          <div className="metrics-widget-head-text">
+            <h2 className="metrics-widget-title">{widget.title}</h2>
+            <p className="metrics-widget-hint">{widget.hint}</p>
+          </div>
+          {widget.kind === 'release-chart' ? (
+            <MetricsChartTypePicker
+              value={releaseChartType}
+              disabled={loading}
+              onChange={(chartType) => {
+                setReleaseChartType(chartType)
+                writeMetricsChartType('release-shipment', chartType)
+              }}
+            />
+          ) : null}
+        </header>
+        {renderWidgetBody(widget.id, widget.kind)}
+      </article>
+    )
+  }
+
   return (
     <div className="app-shell metrics-shell">
       <header className="app-header metrics-header">
-        <div className="app-header-row">
+        <div className="app-header-row metrics-header-main">
           <h1 className="app-title">TFS Roadmap</h1>
           <span className="metrics-header-badge">Метрики</span>
           <div className="header-actions metrics-header-actions">
+            <button
+              type="button"
+              className={`btn-layout-edit ${layoutEditMode ? 'is-active' : ''}`}
+              onClick={() => setLayoutEditMode((value) => !value)}
+              title="Перетаскивание и размер виджетов как в DataLens"
+            >
+              {layoutEditMode ? 'Готово' : 'Настроить'}
+            </button>
             <button className="btn-refresh" type="button" onClick={() => void loadMetrics(false)} disabled={loading}>
               {loading ? '…' : 'Обновить'}
             </button>
@@ -213,38 +231,26 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
             </button>
           </div>
         </div>
-        <p className="metrics-header-note">
-          Быстрая витрина метрик за период {range.from} — {range.to}
-          {dashboard?.generatedAt ? ` · ответ ${new Date(dashboard.generatedAt).toLocaleTimeString('ru-RU')}` : ''}
-          {dashboard?.totals
-            ? ` · ${dashboard.totals.zniCount} ЗНИ в периоде`
-            : ''}
-        </p>
+        <div className="metrics-header-toolbar">
+          {streamBoardPicker}
+          <p className="metrics-header-note">
+            {dashboard?.totals.streams ?? '—'} досок · {streamBoardName} · период {range.from} — {range.to}
+            {dashboard?.generatedAt ? ` · ответ ${new Date(dashboard.generatedAt).toLocaleTimeString('ru-RU')}` : ''}
+            {dashboard?.totals ? ` · ${dashboard.totals.zniCount} ЗНИ` : ''}
+          </p>
+        </div>
       </header>
 
       <section className="metrics-panel">
         {error ? <div className="error">{error}</div> : null}
-        <div className="metrics-dashboard" aria-busy={loading}>
-          {defaultMetricWidgets.map((widget) => (
-            <article
-              key={widget.id}
-              className={`metrics-widget metrics-widget-${widget.kind}`}
-              style={{ gridColumn: widget.gridColumn, gridRow: widget.gridRow }}
-              data-metric-id={widget.id}
-            >
-              <header
-                className={`metrics-widget-head ${widget.id === 'release-shipment' ? 'metrics-widget-head-with-picker' : ''}`}
-              >
-                <div className="metrics-widget-head-text">
-                  <h2 className="metrics-widget-title">{widget.title}</h2>
-                  <p className="metrics-widget-hint">{widget.hint}</p>
-                </div>
-                {widget.id === 'release-shipment' ? streamBoardSelect : null}
-              </header>
-              {renderWidgetBody(widget.id, widget.kind)}
-            </article>
-          ))}
-        </div>
+        <MetricsDashboardGrid
+          editMode={layoutEditMode}
+          layout={gridLayout}
+          onLayoutChange={setGridLayout}
+          onLayoutCommit={setGridLayout}
+        >
+          {renderWidget}
+        </MetricsDashboardGrid>
         <p className="metrics-dashboard-foot">
           Данные из витрины metrics_shipments (обновляется после «Выгрузить» / «Обновить» в TFS).
         </p>

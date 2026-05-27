@@ -20,15 +20,19 @@ def test_release_window_between_dates():
     assert release_window_for_closed_date(date(2026, 6, 2), schedule, period_start) == "2026.06.02.0-R"
 
 
-def test_assign_shipment_release_prefers_tfs_release_field():
-    schedule = collect_release_schedule(["2026.06.02.0-R", "2026.06.16.0-R"])
-    assigned = assign_shipment_release(
-        {"FieldInRelease": "2026.06.02.0-R"},
-        "Req",
-        {},
-        "",
-        date(2026, 6, 10),
-        schedule,
-        date(2026, 1, 1),
-    )
+def test_assign_shipment_release_uses_tfs_release_field():
+    assigned = assign_shipment_release({"FieldInRelease": "2026.06.02.0-R"}, {})
     assert assigned == "2026.06.02.0-R"
+
+
+def test_assign_shipment_release_inherits_parent_release():
+    assigned = assign_shipment_release({}, {"FieldInRelease": "2026.06.16.0-R"})
+    assert assigned == "2026.06.16.0-R"
+
+
+def test_assign_shipment_release_requires_linked_release_not_closed_window():
+    """Без поля релиза задача не попадает в отгрузку, даже если дата Closed «попадает» в окно релиза."""
+    schedule = collect_release_schedule(["2026.06.02.0-R", "2026.06.16.0-R"])
+    period_start = date(2026, 1, 1)
+    assert release_window_for_closed_date(date(2026, 6, 10), schedule, period_start) == "2026.06.16.0-R"
+    assert assign_shipment_release({}, {}) is None
