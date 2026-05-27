@@ -95,11 +95,22 @@ describe('filterReleasesForDisplayMode', () => {
     ])
   })
 
-  it('keeps releases after nearest', () => {
+  it('keeps nearest and all later releases', () => {
     expect(filterReleasesForDisplayMode(releases, 'subsequent', today).map((r) => r.label)).toEqual([
+      '2026.06.02.0-R',
       '2026.06.16.0-R',
       '2026.06.30.0-R',
     ])
+  })
+
+  it('subsequent uses nearest upcoming when earlier dates are still in the list', () => {
+    const futureOnly = [
+      { label: '2026.06.16.0-R', date: localDate('2026-06-16') },
+      { label: '2026.06.30.0-R', date: localDate('2026-06-30') },
+    ]
+    expect(
+      filterReleasesForDisplayMode(futureOnly, 'subsequent', localDate('2026-06-10')).map((r) => r.label),
+    ).toEqual(['2026.06.16.0-R', '2026.06.30.0-R'])
   })
 
   it('keeps all releases', () => {

@@ -110,7 +110,7 @@ export function filterReleasesForDisplayMode(
   if (!nearest) return []
   if (mode === 'nearest') return [nearest]
   const nearestTime = startOfDay(nearest.date).getTime()
-  return releases.filter((release) => startOfDay(release.date).getTime() > nearestTime)
+  return releases.filter((release) => startOfDay(release.date).getTime() >= nearestTime)
 }
 
 export type ReleaseTimelineMarker = UpcomingRelease & {
