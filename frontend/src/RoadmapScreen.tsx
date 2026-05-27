@@ -9,11 +9,21 @@ import {
   writePinnedBoardId,
   writeSelectedBoardIds,
 } from './boardPreferences'
-import { apiFetch, clearSessionId, getJson, getSessionId } from './api'
+import { apiFetch, clearSessionId, getJson, getSessionId, readApiError } from './api'
 import BoardMultiPicker, { formatBoardPickerLabel } from './BoardMultiPicker'
 import PeriodPicker, { type PeriodScale } from './PeriodPicker'
-import TagChips from './TagChips'
 import TagFilterStrip from './TagFilterStrip'
+import ScheduleTimelineBar from './ScheduleTimelineBar'
+import ZniTimelineBar from './ZniTimelineBar'
+import {
+  dayDiff,
+  effectiveRequirementScheduling,
+  effectiveScheduling,
+  requirementSchedulingChanged,
+  schedulingChanged,
+  shiftScheduling,
+  type SchedulingOverride,
+} from './schedulingUtils'
 import RoadmapGrid, { type BoardGroup, type SidebarHead } from './RoadmapGrid'
 import type { TaskRow } from './RoadmapGrid'
 import type { ChangeRequest, Requirement } from './roadmapTypes'
@@ -146,11 +156,6 @@ function toggleRequirementSortAxis(axes: RequirementSortAxes, axis: keyof Requir
   return next
 }
 
-function barStartDate(startDate: string, userStartDate: string | null | undefined, useUserStartDate: boolean) {
-  if (useUserStartDate && userStartDate) return userStartDate
-  return startDate
-}
-
 function isStateVisible(state: string, hiddenStates: string[]) {
   return !hiddenStates.includes(state)
 }
@@ -240,12 +245,17 @@ function requirementStatusLaneFraction(label: string) {
   return clamp(requirementColumnSortIndex(label) / maxIdx, 0, 1)
 }
 
-function zniSpanOnTimeline(parent: ChangeRequest, fromDate: Date, toDate: Date, useUserStartDate: boolean) {
-  const zniStart = barStartDate(parent.startDate, parent.userStartDate, useUserStartDate)
-  const zniEnd = parent.targetDate
+function zniSpanOnTimeline(
+  parent: ChangeRequest,
+  fromDate: Date,
+  toDate: Date,
+  useUserStartDate: boolean,
+  parentOverride?: SchedulingOverride,
+) {
+  const effective = effectiveScheduling(parent, parentOverride, useUserStartDate)
   return {
-    left: progressLeft(zniStart, fromDate, toDate),
-    width: progressWidth(zniStart, zniEnd, fromDate, toDate),
+    left: progressLeft(effective.startDate, fromDate, toDate),
+    width: progressWidth(effective.startDate, effective.targetDate, fromDate, toDate),
   }
 }
 
@@ -273,17 +283,19 @@ function requirementTimelineBarLayout(
   toDate: Date,
   useUserStartDate: boolean,
   sortAxes: RequirementSortAxes,
+  schedulingOverrides: Record<number, SchedulingOverride>,
 ): RequirementBarLayout {
-  const reqStart = barStartDate(
-    requirement.startDate ?? parent.startDate,
-    parent.userStartDate,
+  const effective = effectiveRequirementScheduling(
+    requirement,
+    parent,
+    schedulingOverrides[parent.id],
+    schedulingOverrides[requirement.id],
     useUserStartDate,
   )
-  const reqEnd = requirement.targetDate ?? parent.targetDate
 
   // По дате (или оба): колбаска от Start Date до плановой/конечной даты на шкале времени.
   if (sortAxes.byDate) {
-    const bar = requirementDateBarOnTimeline(reqStart, reqEnd, fromDate, toDate)
+    const bar = requirementDateBarOnTimeline(effective.startDate, effective.targetDate, fromDate, toDate)
     return {
       mode: sortAxes.byStatus ? 'combined' : 'date',
       left: bar.left,
@@ -293,7 +305,13 @@ function requirementTimelineBarLayout(
   }
 
   // Только по статусу: компактный маркер внутри срока ЗНИ (New слева → Closed справа).
-  const span = zniSpanOnTimeline(parent, fromDate, toDate, useUserStartDate)
+  const span = zniSpanOnTimeline(
+    parent,
+    fromDate,
+    toDate,
+    useUserStartDate,
+    schedulingOverrides[parent.id],
+  )
   const pillWidth = clamp(span.width * 0.2, 8, Math.min(span.width * 0.85, 22))
   const avail = Math.max(span.width - pillWidth, 0)
     const fraction = requirementStatusLaneFraction(requirementColumnLabel(requirement))
@@ -311,10 +329,16 @@ function requirementSortStart(
   requirement: Requirement,
   parent: ChangeRequest,
   useUserStartDate: boolean,
+  schedulingOverrides: Record<number, SchedulingOverride>,
 ) {
-  return new Date(
-    barStartDate(requirement.startDate ?? parent.startDate, parent.userStartDate, useUserStartDate),
-  ).getTime()
+  const effective = effectiveRequirementScheduling(
+    requirement,
+    parent,
+    schedulingOverrides[parent.id],
+    schedulingOverrides[requirement.id],
+    useUserStartDate,
+  )
+  return new Date(effective.startDate).getTime()
 }
 
 function sortedVisibleRequirements(
@@ -323,6 +347,7 @@ function sortedVisibleRequirements(
   hiddenStates: string[],
   sortAxes: RequirementSortAxes,
   useUserStartDate: boolean,
+  schedulingOverrides: Record<number, SchedulingOverride>,
 ) {
   const visible = visibleRequirements(requirements, hiddenStates)
   const sorted = [...visible]
@@ -335,7 +360,8 @@ function sortedVisibleRequirements(
     }
     if (sortAxes.byDate) {
       const byDate =
-        requirementSortStart(a, parent, useUserStartDate) - requirementSortStart(b, parent, useUserStartDate)
+        requirementSortStart(a, parent, useUserStartDate, schedulingOverrides) -
+        requirementSortStart(b, parent, useUserStartDate, schedulingOverrides)
       if (byDate !== 0) return byDate
     }
     return a.id - b.id
@@ -349,6 +375,7 @@ function buildTaskRows(
   expandedZniIds: Set<number>,
   sortAxes: RequirementSortAxes,
   useUserStartDate: boolean,
+  schedulingOverrides: Record<number, SchedulingOverride>,
 ) {
   const rows: TaskRow[] = [{ type: 'zni', item }]
   if (!expandedZniIds.has(item.id)) return rows
@@ -358,18 +385,31 @@ function buildTaskRows(
     hiddenStates,
     sortAxes,
     useUserStartDate,
+    schedulingOverrides,
   )) {
     rows.push({ type: 'requirement', item, requirement })
   }
   return rows
 }
 
-function requirementDatesLabel(requirement: Requirement, parent: ChangeRequest) {
-  const start = requirement.startDate ?? parent.startDate
-  const plan = requirement.targetDate ?? parent.targetDate
-  const inherited = !requirement.startDate && !requirement.targetDate
-  const text = `старт ${formatDate(start)} · план ${formatDate(plan)}`
-  return inherited ? `${text} (как у ЗНИ)` : text
+function requirementDatesLabel(
+  requirement: Requirement,
+  parent: ChangeRequest,
+  schedulingOverrides: Record<number, SchedulingOverride>,
+  useUserStartDate: boolean,
+) {
+  const effective = effectiveRequirementScheduling(
+    requirement,
+    parent,
+    schedulingOverrides[parent.id],
+    schedulingOverrides[requirement.id],
+    useUserStartDate,
+  )
+  const inherited =
+    !requirement.startDate && !requirement.targetDate && !schedulingOverrides[requirement.id]
+  const text = `старт ${formatDate(effective.startDate)} · план ${formatDate(effective.targetDate)}`
+  const pending = schedulingOverrides[requirement.id] ? ' · изменено' : ''
+  return (inherited ? `${text} (как у ЗНИ)` : text) + pending
 }
 
 function taskRowKey(row: TaskRow) {
@@ -569,7 +609,7 @@ function workItemHref(item: { id: number; tfsUrl?: string | null }) {
   return url
 }
 
-function stopRowActivation(event: React.MouseEvent | React.PointerEvent) {
+function stopRowActivation(event: React.SyntheticEvent) {
   event.stopPropagation()
 }
 
@@ -675,6 +715,8 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [useUserStartDate, setUseUserStartDate] = useState(readUseUserStartDate)
   const [requirementSortAxes, setRequirementSortAxes] = useState<RequirementSortAxes>(readRequirementSortAxes)
+  const [schedulingOverrides, setSchedulingOverrides] = useState<Record<number, SchedulingOverride>>({})
+  const [pushingScheduling, setPushingScheduling] = useState(false)
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const lastPanDaysRef = useRef(0)
   const [isPanning, setIsPanning] = useState(false)
@@ -724,8 +766,8 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
 
   const buildTaskRowsForGrid = useCallback(
     (item: ChangeRequest, hidden: string[], expanded: Set<number>) =>
-      buildTaskRows(item, hidden, expanded, requirementSortAxes, useUserStartDate),
-    [requirementSortAxes, useUserStartDate],
+      buildTaskRows(item, hidden, expanded, requirementSortAxes, useUserStartDate, schedulingOverrides),
+    [requirementSortAxes, useUserStartDate, schedulingOverrides],
   )
 
   useEffect(() => {
@@ -1006,10 +1048,137 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const isStartDateFiltering = useUserStartDate
   const isBoardSelectionFiltering = selectedBoardIds.length > 0
   const startDateZniCount = stateVisibleItems.filter((item) => hasUserStartDate(item)).length
+  const pendingSchedulingCount = Object.keys(schedulingOverrides).length
+
+  const applySchedulingOverride = useCallback(
+    (prev: Record<number, SchedulingOverride>, id: number, next: SchedulingOverride) => {
+      const copy = { ...prev }
+      copy[id] = next
+      return copy
+    },
+    [],
+  )
+
+  const clearSchedulingOverride = useCallback(
+    (prev: Record<number, SchedulingOverride>, id: number) => {
+      if (!(id in prev)) return prev
+      const { [id]: _removed, ...rest } = prev
+      return rest
+    },
+    [],
+  )
+
+  const onZniSchedulingDatesChange = useCallback(
+    (id: number, startDate: string, targetDate: string) => {
+      setSchedulingOverrides((prev) => {
+        const zni = (data?.items ?? []).find((row) => row.id === id)
+        if (!zni) return prev
+
+        const oldZni = effectiveScheduling(zni, prev[id], useUserStartDate)
+        const newZni = { startDate, targetDate }
+        const deltaStart = dayDiff(oldZni.startDate, newZni.startDate)
+        const deltaTarget = dayDiff(oldZni.targetDate, newZni.targetDate)
+
+        let next = { ...prev }
+        if (schedulingChanged(zni, newZni, useUserStartDate)) {
+          next = applySchedulingOverride(next, id, newZni)
+        } else {
+          next = clearSchedulingOverride(next, id)
+        }
+
+        if (deltaStart === 0 && deltaTarget === 0) return next
+
+        for (const requirement of zni.requirements) {
+          const before = effectiveRequirementScheduling(
+            requirement,
+            zni,
+            prev[id],
+            prev[requirement.id],
+            useUserStartDate,
+          )
+          const shifted = shiftScheduling(before, deltaStart, deltaTarget)
+          if (requirementSchedulingChanged(requirement, zni, shifted, useUserStartDate)) {
+            next = applySchedulingOverride(next, requirement.id, shifted)
+          } else {
+            next = clearSchedulingOverride(next, requirement.id)
+          }
+        }
+        return next
+      })
+    },
+    [applySchedulingOverride, clearSchedulingOverride, data?.items, useUserStartDate],
+  )
+
+  const onRequirementSchedulingDatesChange = useCallback(
+    (id: number, startDate: string, targetDate: string) => {
+      setSchedulingOverrides((prev) => {
+        let parent: ChangeRequest | undefined
+        let requirement: Requirement | undefined
+        for (const zni of data?.items ?? []) {
+          const found = zni.requirements.find((row) => row.id === id)
+          if (found) {
+            parent = zni
+            requirement = found
+            break
+          }
+        }
+        if (!parent || !requirement) return prev
+
+        const next = { startDate, targetDate }
+        if (!requirementSchedulingChanged(requirement, parent, next, useUserStartDate)) {
+          return clearSchedulingOverride(prev, id)
+        }
+        return applySchedulingOverride(prev, id, next)
+      })
+    },
+    [applySchedulingOverride, clearSchedulingOverride, data?.items, useUserStartDate],
+  )
+
+  const pushSchedulingToTfs = async () => {
+    if (!pendingSchedulingCount || !getSessionId()) return
+    setPushingScheduling(true)
+    setError(null)
+    try {
+      const items = Object.entries(schedulingOverrides).map(([id, dates]) => ({
+        id: Number(id),
+        startDate: dates.startDate,
+        targetDate: dates.targetDate,
+      }))
+      const response = await apiFetch('/api/work-items/push-scheduling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, useUserStartDate }),
+      })
+      if (response.status === 401) {
+        clearSessionId()
+        onLogout()
+        return
+      }
+      if (!response.ok) throw new Error(await readApiError(response))
+      const result = (await response.json()) as {
+        successCount: number
+        results: { id: number; ok: boolean; error?: string }[]
+      }
+      const failed = result.results.filter((row) => !row.ok)
+      if (failed.length) {
+        throw new Error(failed.map((row) => `#${row.id}: ${row.error ?? 'ошибка'}`).join('; '))
+      }
+      setSchedulingOverrides({})
+      await loadRoadmap()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось обновить сроки в TFS')
+    } finally {
+      setPushingScheduling(false)
+    }
+  }
 
   const onTimelinePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!canPanTimeline || event.button !== 0) return
-    if ((event.target as HTMLElement).closest('.col-task, a, button, .task-expand-btn, .tfs-link, .timeline-start-toggle, .sheet-resizer')) {
+    if (
+      (event.target as HTMLElement).closest(
+        '.col-task, a, button, .task-expand-btn, .tfs-link, .timeline-start-toggle, .sheet-resizer, .bar-schedule',
+      )
+    ) {
       return
     }
     dragStateRef.current = { startX: event.clientX, from, to }
@@ -1130,8 +1299,13 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
             {zni.title}
           </p>
           <em className="task-list-dates selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
-            старт {formatDate(barStartDate(zni.startDate, zni.userStartDate, useUserStartDate))}
-            {useUserStartDate && zni.userStartDate ? ' (Start Date)' : ''} · план {formatDate(zni.targetDate)}
+            старт{' '}
+            {formatDate(
+              effectiveScheduling(zni, schedulingOverrides[zni.id], useUserStartDate).startDate,
+            )}
+            {useUserStartDate && zni.userStartDate ? ' (Start Date)' : ''} · план{' '}
+            {formatDate(effectiveScheduling(zni, schedulingOverrides[zni.id], useUserStartDate).targetDate)}
+            {schedulingOverrides[zni.id] ? ' · изменено' : ''}
             {reqCount ? ` · ${reqCount} треб.` : ''}
           </em>
         </div>
@@ -1173,7 +1347,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           {requirement.title}
         </p>
         <em className="task-list-dates selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
-          {requirementDatesLabel(requirement, parent)}
+          {requirementDatesLabel(requirement, parent, schedulingOverrides, useUserStartDate)}
         </em>
       </div>
     )
@@ -1182,44 +1356,33 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const renderTimelineCell = (row: TaskRow) => {
     if (row.type === 'zni') {
       const zni = row.item
-      const tfsHref = workItemHref(zni)
       const isActive = selectedItemId === zni.id && selectedRequirementId === null
-      const zniBarStart = barStartDate(zni.startDate, zni.userStartDate, useUserStartDate)
-      const zniBarWidth = progressWidth(zniBarStart, zni.targetDate, fromDate, toDate)
+      const override = schedulingOverrides[zni.id]
+      const effective = effectiveScheduling(zni, override, useUserStartDate)
+      const isPending = Boolean(override && schedulingChanged(zni, override, useUserStartDate))
       const zniHasTags = Boolean(zni.tags?.length)
+      const zniBarWidth = progressWidth(effective.startDate, effective.targetDate, fromDate, toDate)
       const zniBarIsNarrow = zniHasTags && zniBarWidth < 22
       return (
         <article
-          className={`sync-row sync-row-zni roadmap-row roadmap-row-zni ${isActive ? 'active' : ''} ${zniHasTags ? 'roadmap-row-has-tags' : ''} ${zniBarIsNarrow ? 'roadmap-row-has-tags-narrow' : ''}`}
+          className={`sync-row sync-row-zni roadmap-row roadmap-row-zni ${isActive ? 'active' : ''} ${zniHasTags ? 'roadmap-row-has-tags' : ''} ${zniBarIsNarrow ? 'roadmap-row-has-tags-narrow' : ''} ${isPending ? 'roadmap-row-has-pending' : ''}`}
         >
           <div className="timeline-zoom-track">
-            <div className="row-track">
-              <div
-                className={`bar bar-zni ${statusClass(zni.state)} ${zniHasTags ? 'bar-has-tags' : ''} ${zniBarIsNarrow ? 'bar-is-narrow' : ''}`}
-                style={{
-                  left: `${progressLeft(zniBarStart, fromDate, toDate)}%`,
-                  width: `${zniBarWidth}%`,
-                  minWidth: '172px',
-                }}
-                title={`${zoneTitle(zni)} · ${zni.state}\n${zni.title}\nСтарт ${formatDate(zniBarStart)} · план ${formatDate(zni.targetDate)}${zni.tags?.length ? `\nТеги: ${zni.tags.join(', ')}` : ''}`}
-                onClick={(event) => {
-                  if ((event.target as HTMLElement).closest('.selectable-text, .tfs-link')) return
-                  focusTask(zni.id)
-                }}
-              >
-                <div className="bar-main">
-                  <div className="bar-text">
-                    <span className="bar-kind-badge bar-kind-zni">Запрос на изменение</span>
-                    <span className="bar-status">{zni.state}</span>
-                    <span className="bar-label selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
-                      <b>#{zni.id}</b> {zni.title}
-                    </span>
-                  </div>
-                  <TagChips tags={zni.tags ?? []} variant="bar" maxVisible={5} />
-                </div>
-                {tfsHref ? <TfsLink href={tfsHref} className="bar-tfs-link" /> : null}
-              </div>
-            </div>
+            <ZniTimelineBar
+              item={zni}
+              fromDate={fromDate}
+              toDate={toDate}
+              useUserStartDate={useUserStartDate}
+              override={override}
+              isPending={isPending}
+              statusClassName={statusClass(zni.state)}
+              zoneTitle={zoneTitle(zni)}
+              formatDate={formatDate}
+              onDatesChange={onZniSchedulingDatesChange}
+              onFocus={() => focusTask(zni.id)}
+              renderTfsLink={(href) => (href ? <TfsLink href={href} className="bar-tfs-link" /> : null)}
+              stopRowActivation={stopRowActivation}
+            />
           </div>
         </article>
       )
@@ -1228,6 +1391,17 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     const requirement = row.requirement
     const parent = row.item
     const reqHref = workItemHref(requirement)
+    const reqOverride = schedulingOverrides[requirement.id]
+    const reqEffective = effectiveRequirementScheduling(
+      requirement,
+      parent,
+      schedulingOverrides[parent.id],
+      reqOverride,
+      useUserStartDate,
+    )
+    const reqPending = Boolean(
+      reqOverride && requirementSchedulingChanged(requirement, parent, reqOverride, useUserStartDate),
+    )
     const barLayout = requirementTimelineBarLayout(
       requirement,
       parent,
@@ -1235,52 +1409,91 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
       toDate,
       useUserStartDate,
       requirementSortAxes,
+      schedulingOverrides,
     )
     const isActive = selectedItemId === parent.id && selectedRequirementId === requirement.id
     const columnLabel = requirementColumnLabel(requirement)
+    const datesLabel = requirementDatesLabel(requirement, parent, schedulingOverrides, useUserStartDate)
     const barTitle =
       barLayout.mode === 'combined'
-        ? `${columnLabel}${columnLabel !== requirement.state ? ` (статус: ${requirement.state})` : ''} · порядок по колонке, колбаска по датам\n${requirement.title}\n${requirementDatesLabel(requirement, parent)}`
+        ? `${columnLabel}${columnLabel !== requirement.state ? ` (статус: ${requirement.state})` : ''} · порядок по колонке, колбаска по датам\n${requirement.title}\n${datesLabel}`
         : barLayout.mode === 'status'
-          ? `${columnLabel} · по колонке в сроке ЗНИ (New слева → Closed справа)\n${requirement.title}\n${requirementDatesLabel(requirement, parent)}`
-          : `${columnLabel} · колбаска по Start Date и плановой дате\n${requirement.title}\n${requirementDatesLabel(requirement, parent)}`
+          ? `${columnLabel} · по колонке в сроке ЗНИ (New слева → Closed справа)\n${requirement.title}\n${datesLabel}`
+          : `${columnLabel} · колбаска по Start Date и плановой дате\n${requirement.title}\n${datesLabel}`
     const useStairTrack = barLayout.mode === 'status'
     const useCompactBar = barLayout.mode === 'status'
+    const reqDraggable = requirementSortAxes.byDate
+
     return (
-      <article className={`sync-row sync-row-req roadmap-row roadmap-row-req ${isActive ? 'active' : ''}`}>
+      <article
+        className={`sync-row sync-row-req roadmap-row roadmap-row-req ${isActive ? 'active' : ''} ${reqPending ? 'roadmap-row-has-pending' : ''}`}
+      >
         <div className="timeline-zoom-track">
-          <div className={`row-track ${useStairTrack ? 'row-track-req-stair' : ''}`}>
-            {barLayout.span ? (
-              <div
-                className="zni-span-ghost"
-                style={{ left: `${barLayout.span.left}%`, width: `${barLayout.span.width}%` }}
-                aria-hidden
-                title={`Срок ЗНИ #${parent.id}`}
-              />
-            ) : null}
-            <div
-              className={`bar bar-req ${useCompactBar ? 'bar-req-by-status' : ''} ${statusClass(requirementColumnLabel(requirement))}`}
-              style={{
-                left: `${barLayout.left}%`,
-                width: `${barLayout.width}%`,
-                minWidth: useCompactBar ? '120px' : '156px',
-              }}
-              title={barTitle}
-              onClick={(event) => {
-                if ((event.target as HTMLElement).closest('.selectable-text, .tfs-link')) return
-                focusTask(parent.id, requirement.id)
-              }}
+          {reqDraggable ? (
+            <ScheduleTimelineBar
+              fromDate={fromDate}
+              toDate={toDate}
+              committed={reqEffective}
+              isPending={reqPending}
+              draggable
+              barClassName={`bar bar-req bar-schedule ${statusClass(requirementColumnLabel(requirement))}`}
+              title={`${barTitle}${reqPending ? '\nИзменено локально — нажмите «Обновить статусы в TFS»' : ''}\nКрай — изменить срок · центр — сдвинуть`}
+              onDatesChange={(startDate, targetDate) =>
+                onRequirementSchedulingDatesChange(requirement.id, startDate, targetDate)
+              }
+              onFocus={() => focusTask(parent.id, requirement.id)}
+              footer={reqHref ? <TfsLink href={reqHref} className="bar-tfs-link" /> : null}
             >
               <div className="bar-text">
                 <span className="bar-kind-badge bar-kind-req">Требование</span>
                 <span className="bar-status">{requirementColumnLabel(requirement)}</span>
-                <span className="bar-label selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
+                <span
+                  className="bar-label selectable-text"
+                  onClick={stopRowActivation}
+                  onPointerDown={stopRowActivation}
+                >
                   <b>↳ #{requirement.id}</b> {requirement.title}
                 </span>
               </div>
-              {reqHref ? <TfsLink href={reqHref} className="bar-tfs-link" /> : null}
+            </ScheduleTimelineBar>
+          ) : (
+            <div className={`row-track ${useStairTrack ? 'row-track-req-stair' : ''}`}>
+              {barLayout.span ? (
+                <div
+                  className="zni-span-ghost"
+                  style={{ left: `${barLayout.span.left}%`, width: `${barLayout.span.width}%` }}
+                  aria-hidden
+                  title={`Срок ЗНИ #${parent.id}`}
+                />
+              ) : null}
+              <div
+                className={`bar bar-req ${useCompactBar ? 'bar-req-by-status' : ''} ${statusClass(requirementColumnLabel(requirement))}`}
+                style={{
+                  left: `${barLayout.left}%`,
+                  width: `${barLayout.width}%`,
+                  minWidth: useCompactBar ? '120px' : '156px',
+                }}
+                title={barTitle}
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest('.selectable-text, .tfs-link')) return
+                  focusTask(parent.id, requirement.id)
+                }}
+              >
+                <div className="bar-text">
+                  <span className="bar-kind-badge bar-kind-req">Требование</span>
+                  <span className="bar-status">{requirementColumnLabel(requirement)}</span>
+                  <span
+                    className="bar-label selectable-text"
+                    onClick={stopRowActivation}
+                    onPointerDown={stopRowActivation}
+                  >
+                    <b>↳ #{requirement.id}</b> {requirement.title}
+                  </span>
+                </div>
+                {reqHref ? <TfsLink href={reqHref} className="bar-tfs-link" /> : null}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </article>
     )
@@ -1304,7 +1517,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
             type="button"
             className={`timeline-head-toggle ${requirementSortAxes.byDate ? 'is-on' : ''}`}
             aria-pressed={requirementSortAxes.byDate}
-            title="По дате: колбаска на шкале от Start Date до плановой даты; порядок строк по дате старта. С «По статусу» — сначала статус, потом дата."
+            title="По дате: колбаска на шкале от старта до плана; перетаскивание и изменение сроков краями. Порядок строк по дате старта."
             onClick={() => setRequirementSortAxes((prev) => toggleRequirementSortAxis(prev, 'byDate'))}
           >
             По дате
@@ -1431,6 +1644,23 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
             </div>
           </div>
           <div className="header-actions">
+            <button
+              type="button"
+              className={`btn-push-tfs ${pendingSchedulingCount ? 'has-pending' : ''}`}
+              disabled={!pendingSchedulingCount || pushingScheduling || syncing}
+              title={
+                pendingSchedulingCount
+                  ? `Отправить изменённые сроки (${pendingSchedulingCount}) в TFS`
+                  : 'Перетащите колбаску на таймлайне, чтобы изменить сроки'
+              }
+              onClick={() => void pushSchedulingToTfs()}
+            >
+              {pushingScheduling
+                ? '…'
+                : pendingSchedulingCount
+                  ? `Обновить статусы в TFS (${pendingSchedulingCount})`
+                  : 'Обновить статусы в TFS'}
+            </button>
             <button
               className="btn-refresh"
               type="button"

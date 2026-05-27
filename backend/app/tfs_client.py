@@ -62,6 +62,12 @@ def parse_tfs_calendar_date(value: Any) -> date | None:
     return parse_tfs_date(value)
 
 
+def format_tfs_calendar_datetime(value: date) -> str:
+    """Полночь календарного дня MSK → ISO UTC для поля Scheduling в TFS."""
+    dt = datetime(value.year, value.month, value.day, 0, 0, 0, tzinfo=TFS_CALENDAR_TZ)
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
 def date_from_field_list(fields: dict[str, Any], names: Iterable[str]) -> date | None:
     for name in names:
         value = fields.get(name)
@@ -719,6 +725,29 @@ class TfsClient:
                 except ValueError:
                     continue
         return sorted(ids)
+
+    async def patch_work_item(self, item_id: int, patch_ops: list[dict[str, Any]]) -> dict[str, Any]:
+        path = f"/{self.project}/_apis/wit/workitems/{item_id}"
+        headers = {"Content-Type": "application/json-patch+json"}
+        last_response: httpx.Response | None = None
+        for api_version in _api_version_candidates():
+            response = await self.client.patch(
+                path,
+                params={"api-version": api_version},
+                json=patch_ops,
+                headers=headers,
+            )
+            last_response = response
+            if response.status_code in (200, 201):
+                payload = response.json()
+                if isinstance(payload, dict):
+                    return payload
+                return {}
+            if response.status_code == 400 and "out of range" in response.text.lower():
+                continue
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise httpx.HTTPError(f"PATCH failed without response for work item {item_id}")
 
     async def _post_with_api_versions(self, path: str, *, json: dict[str, Any]) -> httpx.Response:
         last_response: httpx.Response | None = None

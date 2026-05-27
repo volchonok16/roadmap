@@ -107,6 +107,31 @@ class SyncRunIn(ApiModel):
     date_to: date | None = Field(default=None, alias="to")
 
 
+class SchedulingPushItemIn(ApiModel):
+    id: int
+    start_date: date = Field(alias="startDate")
+    target_date: date = Field(alias="targetDate")
+
+
+class SchedulingPushIn(ApiModel):
+    items: list[SchedulingPushItemIn]
+    use_user_start_date: bool = Field(default=True, alias="useUserStartDate")
+
+
+class SchedulingPushItemOut(ApiModel):
+    id: int
+    ok: bool
+    error: str | None = None
+    start_date: date | None = Field(default=None, alias="startDate")
+    target_date: date | None = Field(default=None, alias="targetDate")
+    user_start_date: date | None = Field(default=None, alias="userStartDate")
+
+
+class SchedulingPushOut(ApiModel):
+    results: list[SchedulingPushItemOut]
+    success_count: int = 0
+
+
 class SyncRunOut(ApiModel):
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 

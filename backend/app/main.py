@@ -27,6 +27,7 @@ from app.sync_service import (
 )
 from app.db import Base, SessionLocal, engine, get_db
 from app.models import Board, SyncRun, WorkItem
+from app.scheduling_push import push_scheduling_items
 from app.schemas import (
     AuthDefaultsOut,
     AuthLoginOut,
@@ -34,6 +35,9 @@ from app.schemas import (
     ChangeRequestOut,
     RequirementOut,
     RoadmapOut,
+    SchedulingPushIn,
+    SchedulingPushOut,
+    SchedulingPushItemOut,
     SyncRunIn,
     SyncRunOut,
     TfsAuthIn,
@@ -379,6 +383,32 @@ def work_item_raw(item_id: int, db: Session = Depends(get_db)) -> dict:
         "referencedNodes": row.referenced_nodes,
         "raw": row.raw,
     }
+
+
+@app.post("/api/work-items/push-scheduling", response_model=SchedulingPushOut)
+async def push_scheduling(
+    body: SchedulingPushIn,
+    tfs_auth: TfsAuth = Depends(require_tfs_auth),
+    db: Session = Depends(get_db),
+) -> SchedulingPushOut:
+    if not body.items:
+        raise HTTPException(status_code=400, detail="Нет изменений для отправки в TFS")
+    payload = [
+        {"id": item.id, "startDate": item.start_date.isoformat(), "targetDate": item.target_date.isoformat()}
+        for item in body.items
+    ]
+    results = await push_scheduling_items(
+        db,
+        tfs_auth,
+        payload,
+        use_user_start_date=body.use_user_start_date,
+    )
+    out = [SchedulingPushItemOut.model_validate(row) for row in results]
+    success_count = sum(1 for row in out if row.ok)
+    if success_count == 0:
+        first_error = next((row.error for row in out if row.error), "TFS update failed")
+        raise HTTPException(status_code=502, detail=first_error)
+    return SchedulingPushOut(results=out, success_count=success_count)
 
 
 @app.get("/api/roadmap", response_model=RoadmapOut)

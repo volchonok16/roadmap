@@ -2,7 +2,14 @@ import json
 from datetime import date
 from pathlib import Path
 
-from app.tfs_client import TfsClient, normalize_compact_fields, parse_tfs_calendar_date, parse_tfs_date, wit_api_field_names
+from app.tfs_client import (
+    TfsClient,
+    format_tfs_calendar_datetime,
+    normalize_compact_fields,
+    parse_tfs_calendar_date,
+    parse_tfs_date,
+    wit_api_field_names,
+)
 from app.tfs_auth import TfsAuth
 
 
@@ -32,6 +39,10 @@ def test_scheduling_batch_fields_exclude_custom() -> None:
 def test_parse_calendar_target_date_msk() -> None:
     # Целевая дата 16.06.2026 0:00 в TFS
     assert parse_tfs_calendar_date("2026-06-15T21:00:00Z") == date(2026, 6, 16)
+
+
+def test_format_calendar_target_date_msk() -> None:
+    assert format_tfs_calendar_datetime(date(2026, 6, 16)) == "2026-06-15T21:00:00.000Z"
 
 
 def test_normalize_compact_aliases() -> None:
