@@ -7,6 +7,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.board_mapping import BoardLike, board_for_area, board_snapshots_from_rows
+from app.linked_errors import is_error_work_item_type, linked_item_parent_map
+from app.release_fields import work_item_release_label
 from app.config import settings
 from app.db import SessionLocal, close_db_session
 from app.json_utils import as_dict, as_relation_list, as_work_item_list
@@ -574,15 +576,47 @@ async def run_sync(
         save_raw_payload(db, sync_run_id, "linked_items_batch", {"ids": sorted(parent_map.keys()), "items": requirement_items})
         saved_requirements = 0
         saved_linked_items = 0
+        requirement_payloads: list[dict[str, Any]] = []
         for item in as_work_item_list(requirement_items):
             fields = item.get("fields") or {}
             payload = item_payload(item, board_catalog, tfs_auth, parent_id=parent_map.get(item["id"]))
             upsert_work_item(db, payload)
             saved_linked_items += 1
+            for relation in as_relation_list(payload.get("relations")):
+                upsert_relation(db, payload["id"], relation)
             if fields.get("System.WorkItemType") in settings.requirement_type_list:
                 upsert_requirement(db, payload)
                 saved_requirements += 1
+                requirement_payloads.append(payload)
         db.commit()
+
+        zni_ids = {payload["id"] for payload in change_payloads}
+        requirement_ids = {payload["id"] for payload in requirement_payloads}
+        error_parent_map = linked_item_parent_map(requirement_payloads)
+        known_ids = set(parent_map.keys()) | set(error_parent_map.keys())
+        error_ids_to_fetch = sorted(error_parent_map.keys() - known_ids)
+        if error_ids_to_fetch:
+            touch_sync_progress(db, sync_run, f"Загрузка ошибок ({len(error_ids_to_fetch)})…")
+            close_db_session(db)
+            db = None  # type: ignore[assignment]
+            error_items = await client.get_work_items_batch(error_ids_to_fetch)
+            db, sync_run = open_db()
+            save_raw_payload(db, sync_run_id, "linked_errors_batch", {"ids": error_ids_to_fetch, "items": error_items})
+            for item in as_work_item_list(error_items):
+                fields = item.get("fields") or {}
+                if not is_error_work_item_type(str(fields.get("System.WorkItemType") or "")):
+                    continue
+                payload = item_payload(
+                    item,
+                    board_catalog,
+                    tfs_auth,
+                    parent_id=error_parent_map.get(item["id"]),
+                )
+                upsert_work_item(db, payload)
+                for relation in as_relation_list(payload.get("relations")):
+                    upsert_relation(db, payload["id"], relation)
+                saved_linked_items += 1
+            db.commit()
 
         sync_run.status = "success"
         boards_count = len(team_boards) if team_boards else len(board_catalog)

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import ErrorsDisplayToggle, { readErrorsDisplayMode, type ErrorsDisplayMode } from './ErrorsDisplayToggle'
+import ReleasesDisplayToggle, { readReleasesDisplayMode } from './ReleasesDisplayToggle'
 import {
   readFavoriteBoardIds,
   readInitialSelectedBoardIds,
@@ -16,6 +18,17 @@ import TagFilterStrip from './TagFilterStrip'
 import ScheduleTimelineBar from './ScheduleTimelineBar'
 import ZniTimelineBar from './ZniTimelineBar'
 import {
+  buildMergedColumnFilters,
+  buildSelectedBoardColumnFilters,
+  columnBarClass,
+  columnColorClass,
+  columnNameFilterKey,
+  isColumnKeyVisible,
+  isZniColumnVisible,
+  zniColumnLabel,
+  zniColumnOrder,
+} from './kanbanColumns'
+import {
   dayDiff,
   effectiveRequirementScheduling,
   effectiveScheduling,
@@ -24,15 +37,34 @@ import {
   shiftScheduling,
   type SchedulingOverride,
 } from './schedulingUtils'
+import {
+  buildReleaseTimelineMarkers,
+  filterReleasesForDisplayMode,
+  type ReleasesDisplayMode,
+} from './releaseUtils'
+import { zniMatchesSearch } from './zniSearch'
 import RoadmapGrid, { type BoardGroup, type SidebarHead } from './RoadmapGrid'
 import type { TaskRow } from './RoadmapGrid'
-import type { ChangeRequest, Requirement } from './roadmapTypes'
+import {
+  linkedErrorsForChangeRequest,
+  linkedErrorsForRequirement,
+  normalizeRoadmapItems,
+} from './linkedErrors'
+import {
+  isRequirementLikeColumnVisible,
+  linkedErrorColumnLabel,
+  normalizeRequirementColumn,
+  requirementColumnLabel,
+  requirementColumnOrder,
+} from './requirementColumns'
+import type { ChangeRequest, LinkedError, Requirement } from './roadmapTypes'
 import './App.css'
 
 type Board = {
   id: string
   name: string
   areaPath?: string | null
+  columns?: string[]
 }
 
 type RoadmapResponse = {
@@ -55,84 +87,47 @@ type Scale = PeriodScale
 
 const dayMs = 24 * 60 * 60 * 1000
 
-const stateOrder = ['New', 'Backlog', 'Express Analysis', 'Analysis Backlog', 'Analysis', 'Development', 'UAT', 'Pilot', 'Closed']
-
-/**
- * Порядок колонок на доске «Требования» в TFS (слева → справа).
- * См. Kanban: Backlog → Full Analysis → … → Closed.
- */
-const requirementColumnOrder = [
-  'Backlog',
-  'Full Analysis',
-  'Requirement Review',
-  'Development Backlog',
-  'Development',
-  'Code Review Backlog',
-  'Code Review',
-  'Test Backlog',
-  'Test',
-  'Test Review',
-  'Acceptance',
-  'Merge-Backlog',
-  'Merge',
-  'Closed',
-  'New',
-  'Merged',
-]
-
-const requirementColumnAliases: Record<string, string> = {
-  'requirement review': 'Requirement Review',
-  'code review backlog': 'Code Review Backlog',
-  'code-review backlog': 'Code Review Backlog',
-  'code review': 'Code Review',
-  'code-review': 'Code Review',
-  'test backlog': 'Test Backlog',
-  'test review': 'Test Review',
-  'merge-backlog': 'Merge-Backlog',
-  'merge backlog': 'Merge-Backlog',
-  merged: 'Merge',
-  '11. closed': 'Closed',
-  'arch/full analysis': 'Full Analysis',
-  'analysis backlog': 'Full Analysis',
-}
-
-function normalizeRequirementColumn(label: string) {
-  const trimmed = label.trim()
-  if (!trimmed) return trimmed
-  const alias = requirementColumnAliases[trimmed.toLowerCase()]
-  if (alias) return alias
-  const exact = requirementColumnOrder.find((item) => item.toLowerCase() === trimmed.toLowerCase())
-  return exact ?? trimmed
-}
-
-function requirementColumnLabel(requirement: Requirement) {
-  const raw = requirement.column?.trim() || requirement.state
-  return normalizeRequirementColumn(raw)
-}
 const SIDEBAR_WIDTH_KEY = 'roadmap-sidebar-width'
 const USE_USER_START_DATE_KEY = 'roadmap-use-user-start-date'
 const REQUIREMENT_SORT_KEY = 'roadmap-requirement-sort'
 const REQUIREMENT_SORT_STATUS_KEY = 'roadmap-requirement-sort-status'
 const REQUIREMENT_SORT_DATE_KEY = 'roadmap-requirement-sort-date'
 const SELECTED_TAGS_KEY = 'roadmap-selected-tags'
+const ZNI_SEARCH_KEY = 'roadmap-zni-search'
+const SHOW_RELEASES_KEY = 'roadmap-show-releases'
+const RELEASES_DISPLAY_MODE_KEY = 'roadmap-releases-display-mode'
+const SHOW_ERRORS_KEY = 'roadmap-show-errors'
+const ERRORS_DISPLAY_MODE_KEY = 'roadmap-errors-display-mode'
 
 type RequirementSortAxes = {
   byStatus: boolean
   byDate: boolean
 }
-const SIDEBAR_MIN_WIDTH = 220
-const SIDEBAR_MAX_WIDTH = 420
+const SIDEBAR_MIN_WIDTH = 260
+const SIDEBAR_MAX_WIDTH = 480
 
 function readSidebarWidth() {
   const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
   if (Number.isFinite(saved) && saved >= SIDEBAR_MIN_WIDTH && saved <= SIDEBAR_MAX_WIDTH) {
     return saved
   }
-  return 260
+  return 300
 }
 
 function readUseUserStartDate() {
   return localStorage.getItem(USE_USER_START_DATE_KEY) === '1'
+}
+
+function readShowReleases() {
+  const saved = localStorage.getItem(SHOW_RELEASES_KEY)
+  if (saved === '0') return false
+  return true
+}
+
+function readShowErrors() {
+  const saved = localStorage.getItem(SHOW_ERRORS_KEY)
+  if (saved === '0') return false
+  return true
 }
 
 function readRequirementSortAxes(): RequirementSortAxes {
@@ -154,10 +149,6 @@ function toggleRequirementSortAxis(axes: RequirementSortAxes, axis: keyof Requir
   const next = { ...axes, [axis]: !axes[axis] }
   if (!next.byStatus && !next.byDate) return axes
   return next
-}
-
-function isStateVisible(state: string, hiddenStates: string[]) {
-  return !hiddenStates.includes(state)
 }
 
 function readSelectedTags(): string[] {
@@ -194,26 +185,28 @@ function hasUserStartDate(item: ChangeRequest) {
   return Boolean(item.userStartDate)
 }
 
-function visibleRequirements(requirements: Requirement[], hiddenStates: string[]) {
-  return requirements.filter((requirement) => isStateVisible(requirement.state, hiddenStates))
+function visibleRequirements(requirements: Requirement[], hiddenColumnKeys: string[]) {
+  return requirements.filter((requirement) =>
+    isRequirementLikeColumnVisible(requirement, hiddenColumnKeys),
+  )
 }
 
 function requirementStatusSortIndex(state: string) {
   const normalized = state.trim()
-  const exact = stateOrder.findIndex((item) => item.toLowerCase() === normalized.toLowerCase())
+  const exact = zniColumnOrder.findIndex((item) => item.toLowerCase() === normalized.toLowerCase())
   if (exact >= 0) return exact
   const lower = normalized.toLowerCase()
   if (lower.includes('new')) return 0
-  if (lower.includes('closed') || lower.includes('done') || lower.includes('merged')) return stateOrder.length - 1
-  if (lower.includes('pilot')) return stateOrder.indexOf('Pilot')
-  if (lower.includes('uat') || lower.includes('test')) return stateOrder.indexOf('UAT')
-  if (lower.includes('develop') || lower.includes('code-review')) return stateOrder.indexOf('Development')
-  if (lower.includes('express')) return stateOrder.indexOf('Express Analysis')
-  if (lower.includes('architecture')) return stateOrder.indexOf('Analysis')
-  if (lower.includes('backlog') && lower.includes('analysis')) return stateOrder.indexOf('Analysis Backlog')
-  if (lower.includes('backlog')) return stateOrder.indexOf('Backlog')
-  if (lower.includes('analysis') || lower.includes('analyt') || lower.includes('review')) return stateOrder.indexOf('Analysis')
-  return stateOrder.length
+  if (lower.includes('closed') || lower.includes('done') || lower.includes('merged')) return zniColumnOrder.length - 1
+  if (lower.includes('pilot')) return zniColumnOrder.indexOf('Pilot')
+  if (lower.includes('uat') || lower.includes('test')) return zniColumnOrder.indexOf('UAT')
+  if (lower.includes('develop') || lower.includes('code-review')) return zniColumnOrder.indexOf('Development')
+  if (lower.includes('express')) return zniColumnOrder.indexOf('Express Analysis')
+  if (lower.includes('architecture')) return zniColumnOrder.indexOf('Analysis')
+  if (lower.includes('backlog') && lower.includes('analysis')) return zniColumnOrder.indexOf('Analysis Backlog')
+  if (lower.includes('backlog')) return zniColumnOrder.indexOf('Backlog')
+  if (lower.includes('analysis') || lower.includes('analyt') || lower.includes('review')) return zniColumnOrder.indexOf('Analysis')
+  return zniColumnOrder.length
 }
 
 function requirementColumnSortIndex(label: string) {
@@ -325,6 +318,34 @@ function requirementTimelineBarLayout(
   }
 }
 
+function errorTimelineBarLayout(
+  error: { column?: string | null; state: string; title: string },
+  parent: ChangeRequest,
+  fromDate: Date,
+  toDate: Date,
+  useUserStartDate: boolean,
+  sortAxes: RequirementSortAxes,
+  schedulingOverrides: Record<number, SchedulingOverride>,
+  errorsDisplayMode: ErrorsDisplayMode,
+) {
+  const span = zniSpanOnTimeline(parent, fromDate, toDate, useUserStartDate, schedulingOverrides[parent.id])
+  const label = errorColumnLabel(error)
+  const laneByStatus = sortAxes.byStatus && errorsDisplayMode === 'merged'
+  if (laneByStatus) {
+    const fraction = requirementStatusLaneFraction(label)
+    const pillWidth = Math.max(span.width * 0.12, 5)
+    const innerLeft = Math.max(0, span.width * fraction * 0.86)
+    return { span, left: span.left + innerLeft, width: pillWidth, byStatus: true as const, label }
+  }
+  return {
+    span,
+    left: span.left + span.width * 0.08,
+    width: Math.max(span.width * 0.28, 8),
+    byStatus: false as const,
+    label,
+  }
+}
+
 function requirementSortStart(
   requirement: Requirement,
   parent: ChangeRequest,
@@ -344,12 +365,12 @@ function requirementSortStart(
 function sortedVisibleRequirements(
   requirements: Requirement[],
   parent: ChangeRequest,
-  hiddenStates: string[],
+  hiddenColumnKeys: string[],
   sortAxes: RequirementSortAxes,
   useUserStartDate: boolean,
   schedulingOverrides: Record<number, SchedulingOverride>,
 ) {
-  const visible = visibleRequirements(requirements, hiddenStates)
+  const visible = visibleRequirements(requirements, hiddenColumnKeys)
   const sorted = [...visible]
   sorted.sort((a, b) => {
     if (sortAxes.byStatus) {
@@ -369,26 +390,131 @@ function sortedVisibleRequirements(
   return sorted
 }
 
-function buildTaskRows(
-  item: ChangeRequest,
-  hiddenStates: string[],
-  expandedZniIds: Set<number>,
+function errorColumnLabel(error: LinkedError) {
+  return linkedErrorColumnLabel(error)
+}
+
+function taskRowStatusLabel(row: TaskRow) {
+  if (row.type === 'requirement') return requirementColumnLabel(row.requirement)
+  if (row.type === 'error') return errorColumnLabel(row.error)
+  return ''
+}
+
+function taskRowStatusSortIndex(row: TaskRow) {
+  return requirementColumnSortIndex(taskRowStatusLabel(row))
+}
+
+function childRowSortStart(
+  row: TaskRow,
+  parent: ChangeRequest,
+  useUserStartDate: boolean,
+  schedulingOverrides: Record<number, SchedulingOverride>,
+) {
+  if (row.type === 'requirement') {
+    return requirementSortStart(row.requirement, parent, useUserStartDate, schedulingOverrides)
+  }
+  if (row.type === 'error' && row.requirement) {
+    return requirementSortStart(row.requirement, parent, useUserStartDate, schedulingOverrides)
+  }
+  const effective = effectiveScheduling(parent, schedulingOverrides[parent.id], useUserStartDate)
+  return new Date(effective.startDate).getTime()
+}
+
+function childRowSortId(row: TaskRow) {
+  if (row.type === 'requirement') return row.requirement.id
+  if (row.type === 'error') return row.error.id
+  return row.item.id
+}
+
+function childRowKindOrder(row: TaskRow) {
+  if (row.type === 'requirement') return 0
+  if (row.type === 'error') return 1
+  return 2
+}
+
+function compareChildTaskRows(
+  a: TaskRow,
+  b: TaskRow,
+  parent: ChangeRequest,
   sortAxes: RequirementSortAxes,
   useUserStartDate: boolean,
   schedulingOverrides: Record<number, SchedulingOverride>,
 ) {
+  const byStatus = taskRowStatusSortIndex(a) - taskRowStatusSortIndex(b)
+  if (byStatus !== 0) return byStatus
+  if (sortAxes.byDate) {
+    const byDate =
+      childRowSortStart(a, parent, useUserStartDate, schedulingOverrides) -
+      childRowSortStart(b, parent, useUserStartDate, schedulingOverrides)
+    if (byDate !== 0) return byDate
+  }
+  const byKind = childRowKindOrder(a) - childRowKindOrder(b)
+  if (byKind !== 0) return byKind
+  return childRowSortId(a) - childRowSortId(b)
+}
+
+function buildTaskRows(
+  item: ChangeRequest,
+  hiddenColumnKeys: string[],
+  expandedZniIds: Set<number>,
+  sortAxes: RequirementSortAxes,
+  useUserStartDate: boolean,
+  schedulingOverrides: Record<number, SchedulingOverride>,
+  showErrors: boolean,
+  errorsDisplayMode: ErrorsDisplayMode,
+) {
   const rows: TaskRow[] = [{ type: 'zni', item }]
   if (!expandedZniIds.has(item.id)) return rows
-  for (const requirement of sortedVisibleRequirements(
-    item.requirements,
-    item,
-    hiddenStates,
-    sortAxes,
-    useUserStartDate,
-    schedulingOverrides,
-  )) {
-    rows.push({ type: 'requirement', item, requirement })
+
+  if (!showErrors) {
+    for (const requirement of sortedVisibleRequirements(
+      item.requirements,
+      item,
+      hiddenColumnKeys,
+      sortAxes,
+      useUserStartDate,
+      schedulingOverrides,
+    )) {
+      rows.push({ type: 'requirement', item, requirement })
+    }
+    return rows
   }
+
+  if (errorsDisplayMode === 'block') {
+    for (const requirement of sortedVisibleRequirements(
+      item.requirements,
+      item,
+      hiddenColumnKeys,
+      sortAxes,
+      useUserStartDate,
+      schedulingOverrides,
+    )) {
+      rows.push({ type: 'requirement', item, requirement })
+      for (const error of linkedErrorsForRequirement(requirement, hiddenColumnKeys)) {
+        rows.push({ type: 'error', item, requirement, error })
+      }
+    }
+    for (const error of linkedErrorsForChangeRequest(item, hiddenColumnKeys)) {
+      rows.push({ type: 'error', item, error })
+    }
+    return rows
+  }
+
+  const children: TaskRow[] = []
+  const visible = visibleRequirements(item.requirements, hiddenColumnKeys)
+  for (const requirement of visible) {
+    children.push({ type: 'requirement', item, requirement })
+    for (const error of linkedErrorsForRequirement(requirement, hiddenColumnKeys)) {
+      children.push({ type: 'error', item, requirement, error })
+    }
+  }
+  for (const error of linkedErrorsForChangeRequest(item, hiddenColumnKeys)) {
+    children.push({ type: 'error', item, error })
+  }
+  children.sort((left, right) =>
+    compareChildTaskRows(left, right, item, sortAxes, useUserStartDate, schedulingOverrides),
+  )
+  rows.push(...children)
   return rows
 }
 
@@ -413,7 +539,9 @@ function requirementDatesLabel(
 }
 
 function taskRowKey(row: TaskRow) {
-  return row.type === 'zni' ? `zni-${row.item.id}` : `req-${row.requirement.id}`
+  if (row.type === 'zni') return `zni-${row.item.id}`
+  if (row.type === 'requirement') return `req-${row.requirement.id}`
+  return `err-${row.error.id}-${row.requirement?.id ?? 'zni'}-${row.item.id}`
 }
 
 function formatDate(value: string | Date) {
@@ -500,107 +628,6 @@ function dayTicks(from: Date, to: Date, scale: Scale) {
   }
 
   return ticks
-}
-
-function stateColorClass(state: string) {
-  switch (state) {
-    case 'New':
-      return 'state-new'
-    case 'Backlog':
-      return 'state-backlog'
-    case 'Express Analysis':
-      return 'state-express'
-    case 'Analysis Backlog':
-      return 'state-analysis-bl'
-    case 'Analysis':
-      return 'state-analysis'
-    case 'Development':
-      return 'state-development'
-    case 'UAT':
-      return 'state-uat'
-    case 'Pilot':
-      return 'state-pilot'
-    case 'Closed':
-      return 'state-closed'
-    case 'Done':
-      return 'state-closed'
-    case 'Full Analysis':
-    case 'Requirement Review':
-      return 'state-analysis'
-    case 'Development Backlog':
-    case 'Development':
-      return 'state-development'
-    case 'Code Review Backlog':
-    case 'Code Review':
-      return 'state-development'
-    case 'Test Backlog':
-    case 'Test':
-    case 'Test Review':
-      return 'state-uat'
-    case 'Acceptance':
-      return 'state-pilot'
-    case 'Merge-Backlog':
-    case 'Merge':
-    case 'Merged':
-      return 'state-closed'
-    default:
-      if (state.toLowerCase().includes('accept')) return 'state-pilot'
-      if (state.toLowerCase().includes('test')) return 'state-uat'
-      if (state.toLowerCase().includes('merge')) return 'state-closed'
-      if (state.toLowerCase().includes('review') || state.toLowerCase().includes('analysis')) return 'state-analysis'
-      if (state.toLowerCase().includes('develop') || state.toLowerCase().includes('code')) return 'state-development'
-      return 'state-default'
-  }
-}
-
-function statusClass(state: string) {
-  switch (state) {
-    case 'New':
-      return 'new'
-    case 'Backlog':
-      return 'backlog'
-    case 'Express Analysis':
-      return 'express'
-    case 'Analysis Backlog':
-      return 'analysis-bl'
-    case 'Analysis':
-      return 'analysis'
-    case 'Development':
-      return 'development'
-    case 'UAT':
-      return 'uat'
-    case 'Pilot':
-      return 'pilot'
-    case 'Closed':
-      return 'closed'
-    case 'Done':
-      return 'closed'
-    case 'Full Analysis':
-    case 'Requirement Review':
-      return 'analysis'
-    case 'Development Backlog':
-    case 'Development':
-    case 'Code Review Backlog':
-    case 'Code Review':
-      return 'development'
-    case 'Test Backlog':
-    case 'Test':
-    case 'Test Review':
-      return 'uat'
-    case 'Acceptance':
-      return 'pilot'
-    case 'Merge-Backlog':
-    case 'Merge':
-    case 'Merged':
-      return 'closed'
-    default:
-      if (state.toLowerCase().includes('accept')) return 'pilot'
-      if (state.toLowerCase().includes('test')) return 'uat'
-      if (state.toLowerCase().includes('merge')) return 'closed'
-      if (state.toLowerCase().includes('review') || state.toLowerCase().includes('analysis')) return 'analysis'
-      if (state.toLowerCase().includes('develop') || state.toLowerCase().includes('code')) return 'development'
-      return 'default'
-  }
 }
 
 function workItemHref(item: { id: number; tfsUrl?: string | null }) {
@@ -710,10 +737,21 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const dragStateRef = useRef<{ startX: number; from: string; to: string } | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [selectedRequirementId, setSelectedRequirementId] = useState<number | null>(null)
-  const [hiddenStates, setHiddenStates] = useState<string[]>([])
+  const [hiddenColumnKeys, setHiddenColumnKeys] = useState<string[]>([])
   const [selectedTags, setSelectedTags] = useState<string[]>(readSelectedTags)
+  const [zniSearchQuery, setZniSearchQuery] = useState(() => {
+    try {
+      return localStorage.getItem(ZNI_SEARCH_KEY) ?? ''
+    } catch {
+      return ''
+    }
+  })
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [useUserStartDate, setUseUserStartDate] = useState(readUseUserStartDate)
+  const [showReleases, setShowReleases] = useState(readShowReleases)
+  const [releasesDisplayMode, setReleasesDisplayMode] = useState<ReleasesDisplayMode>(readReleasesDisplayMode)
+  const [showErrors, setShowErrors] = useState(readShowErrors)
+  const [errorsDisplayMode, setErrorsDisplayMode] = useState<ErrorsDisplayMode>(readErrorsDisplayMode)
   const [requirementSortAxes, setRequirementSortAxes] = useState<RequirementSortAxes>(readRequirementSortAxes)
   const [schedulingOverrides, setSchedulingOverrides] = useState<Record<number, SchedulingOverride>>({})
   const [pushingScheduling, setPushingScheduling] = useState(false)
@@ -721,9 +759,10 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const lastPanDaysRef = useRef(0)
   const [isPanning, setIsPanning] = useState(false)
 
-  const toggleHiddenState = useCallback((state: string) => {
-    setHiddenStates((prev) =>
-      prev.includes(state) ? prev.filter((item) => item !== state) : [...prev, state],
+  const toggleHiddenColumn = useCallback((column: string) => {
+    const key = columnNameFilterKey(column)
+    setHiddenColumnKeys((prev) =>
+      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
     )
   }, [])
 
@@ -749,8 +788,28 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   }, [useUserStartDate])
 
   useEffect(() => {
+    localStorage.setItem(SHOW_RELEASES_KEY, showReleases ? '1' : '0')
+  }, [showReleases])
+
+  useEffect(() => {
+    localStorage.setItem(RELEASES_DISPLAY_MODE_KEY, releasesDisplayMode)
+  }, [releasesDisplayMode])
+
+  useEffect(() => {
+    localStorage.setItem(SHOW_ERRORS_KEY, showErrors ? '1' : '0')
+  }, [showErrors])
+
+  useEffect(() => {
+    localStorage.setItem(ERRORS_DISPLAY_MODE_KEY, errorsDisplayMode)
+  }, [errorsDisplayMode])
+
+  useEffect(() => {
     localStorage.setItem(SELECTED_TAGS_KEY, JSON.stringify(selectedTags))
   }, [selectedTags])
+
+  useEffect(() => {
+    localStorage.setItem(ZNI_SEARCH_KEY, zniSearchQuery)
+  }, [zniSearchQuery])
 
   useEffect(() => {
     localStorage.setItem(REQUIREMENT_SORT_STATUS_KEY, requirementSortAxes.byStatus ? '1' : '0')
@@ -766,8 +825,17 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
 
   const buildTaskRowsForGrid = useCallback(
     (item: ChangeRequest, hidden: string[], expanded: Set<number>) =>
-      buildTaskRows(item, hidden, expanded, requirementSortAxes, useUserStartDate, schedulingOverrides),
-    [requirementSortAxes, useUserStartDate, schedulingOverrides],
+      buildTaskRows(
+        item,
+        hidden,
+        expanded,
+        requirementSortAxes,
+        useUserStartDate,
+        schedulingOverrides,
+        showErrors,
+        errorsDisplayMode,
+      ),
+    [requirementSortAxes, useUserStartDate, schedulingOverrides, showErrors, errorsDisplayMode],
   )
 
   useEffect(() => {
@@ -834,7 +902,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
       const params = new URLSearchParams({ from, to })
       for (const id of selectedBoardIds) params.append('board_id', id)
       const roadmap = await getJson<RoadmapResponse>(`/api/roadmap?${params}`)
-      setData(roadmap)
+      setData({ ...roadmap, items: normalizeRoadmapItems(roadmap.items ?? []) })
       if (roadmap.boards.length) {
         setBoards((prev) => {
           const merged = new Map(prev.map((board) => [board.id, board]))
@@ -1018,17 +1086,55 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const isTodayVisible = today >= fromDate && today <= toDate
   const canPanTimeline =
     scale === 'quarter' || scale === 'month' || scale === 'week' || scale === 'custom'
-  const totalItems = data?.items ?? []
-  const stateVisibleItems = totalItems.filter((item) => isStateVisible(item.state, hiddenStates))
-  const visibleItems = useUserStartDate
-    ? stateVisibleItems.filter((item) => hasUserStartDate(item))
-    : stateVisibleItems
-  const boardFilteredItems = visibleItems.filter((item) => itemMatchesSelectedBoards(item, selectedBoardIds))
-  const availableTags = useMemo(() => collectTagsFromItems(boardFilteredItems), [boardFilteredItems])
-  useEffect(() => {
-    setSelectedTags((prev) => prev.filter((tag) => availableTags.includes(tag)))
-  }, [availableTags])
-  const tagFilteredItems = boardFilteredItems.filter((item) => isItemVisibleByTags(item, selectedTags))
+  const totalItems = data?.items
+  const startDateScopedItems = useMemo(() => {
+    const items = totalItems ?? []
+    return useUserStartDate ? items.filter((item) => hasUserStartDate(item)) : items
+  }, [totalItems, useUserStartDate])
+  const selectedBoardIdsKey = selectedBoardIds.join(',')
+  const boardScopedItems = useMemo(
+    () => startDateScopedItems.filter((item) => itemMatchesSelectedBoards(item, selectedBoardIds)),
+    [startDateScopedItems, selectedBoardIdsKey],
+  )
+  const availableTags = useMemo(() => collectTagsFromItems(boardScopedItems), [boardScopedItems])
+  const activeSelectedTags = useMemo(() => {
+    if (!selectedTags.length) return selectedTags
+    const allowed = new Set(availableTags)
+    return selectedTags.filter((tag) => allowed.has(tag))
+  }, [selectedTags, availableTags])
+  const tagScopedItems = boardScopedItems.filter((item) => isItemVisibleByTags(item, activeSelectedTags))
+  const searchScopedItems = useMemo(
+    () => tagScopedItems.filter((item) => zniMatchesSearch(item, zniSearchQuery)),
+    [tagScopedItems, zniSearchQuery],
+  )
+  const columnFiltersByBoard = useMemo(
+    () => buildSelectedBoardColumnFilters(searchScopedItems, data?.boards ?? [], selectedBoardIds),
+    [searchScopedItems, data?.boards, selectedBoardIds],
+  )
+  const useMergedColumnFilters = columnFiltersByBoard.length > 1
+  const mergedColumnFilters = useMemo(
+    () => buildMergedColumnFilters(columnFiltersByBoard),
+    [columnFiltersByBoard],
+  )
+  const tagFilteredItems = searchScopedItems.filter((item) => isZniColumnVisible(item, hiddenColumnKeys))
+  const releaseMarkers = useMemo(
+    () =>
+      buildReleaseTimelineMarkers(tagFilteredItems, today, fromDate, toDate, (date, from, to) =>
+        progressLeft(date, from, to),
+      ),
+    [tagFilteredItems, today, fromDate, toDate],
+  )
+  const visibleReleaseMarkers = useMemo(() => {
+    if (!showReleases) return []
+    const filtered = filterReleasesForDisplayMode(
+      releaseMarkers.map(({ label, date }) => ({ label, date })),
+      releasesDisplayMode,
+      today,
+    )
+    const labels = new Set(filtered.map((release) => release.label))
+    return releaseMarkers.filter((marker) => labels.has(marker.label))
+  }, [showReleases, releasesDisplayMode, releaseMarkers, today])
+  const startDateZniCount = startDateScopedItems.filter((item) => hasUserStartDate(item)).length
   const groups = groupByBoard(tagFilteredItems)
   const sidebarHead = useMemo((): SidebarHead => {
     if (groups.length === 1) {
@@ -1043,11 +1149,11 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
       subtitle: formatBoardPickerLabel(selectedBoardIds, boardOptions),
     }
   }, [groups, selectedBoardIds, boardOptions])
-  const isStatusFiltering = hiddenStates.length > 0
-  const isTagFiltering = selectedTags.length > 0
+  const isColumnFiltering = hiddenColumnKeys.length > 0
+  const isZniSearchFiltering = zniSearchQuery.trim().length > 0
+  const isTagFiltering = activeSelectedTags.length > 0
   const isStartDateFiltering = useUserStartDate
   const isBoardSelectionFiltering = selectedBoardIds.length > 0
-  const startDateZniCount = stateVisibleItems.filter((item) => hasUserStartDate(item)).length
   const pendingSchedulingCount = Object.keys(schedulingOverrides).length
 
   const applySchedulingOverride = useCallback(
@@ -1237,10 +1343,51 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   } as React.CSSProperties
 
   const renderTaskCell = (row: TaskRow) => {
+    if (row.type === 'error') {
+      const parent = row.item
+      const error = row.error
+      const errHref = workItemHref(error)
+      const isActive =
+        selectedItemId === parent.id && selectedRequirementId === (row.requirement?.id ?? null)
+      const indentClass = row.requirement ? 'task-list-row-error-req' : 'task-list-row-error-zni'
+      return (
+        <div
+          role="button"
+          tabIndex={0}
+          className={`sync-row sync-row-err task-list-row task-list-row-error ${indentClass} ${isActive ? 'active' : ''}`}
+          onClick={(event) => {
+            if ((event.target as HTMLElement).closest('a, .selectable-text, .tfs-link')) return
+            focusTask(parent.id, row.requirement?.id)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              focusTask(parent.id, row.requirement?.id)
+            }
+          }}
+        >
+          <div className="task-list-row-top">
+            <span className="task-list-id selectable-text">↳↳ #{error.id}</span>
+            <div className="task-list-row-actions">{errHref ? <TfsLink href={errHref} /> : null}</div>
+          </div>
+          <div className="task-kind-row">
+            <span className="task-kind-badge task-kind-err">Ошибка</span>
+            <div className={`task-column-pill ${columnColorClass(errorColumnLabel(error))}`}>
+              <span className="task-column-pill-label">Статус</span>
+              <span className="task-column-pill-value">{errorColumnLabel(error)}</span>
+            </div>
+          </div>
+          <p className="task-list-title-full selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
+            {error.title || `Ошибка #${error.id}`}
+          </p>
+        </div>
+      )
+    }
+
     if (row.type === 'zni') {
       const zni = row.item
       const tfsHref = workItemHref(zni)
-      const childRequirements = visibleRequirements(zni.requirements, hiddenStates)
+      const childRequirements = visibleRequirements(zni.requirements, hiddenColumnKeys)
       const reqCount = childRequirements.length
       const isExpanded = expandedZniIds.has(zni.id)
       const isActive = selectedItemId === zni.id && selectedRequirementId === null
@@ -1290,9 +1437,9 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           </div>
           <div className="task-kind-row">
             <span className="task-kind-badge task-kind-zni">Запрос на изменение</span>
-            <div className={`task-column-pill ${stateColorClass(zni.state)}`}>
+            <div className={`task-column-pill ${columnColorClass(zniColumnLabel(zni))}`}>
               <span className="task-column-pill-label">Колонка</span>
-              <span className="task-column-pill-value">{zni.state}</span>
+              <span className="task-column-pill-value">{zniColumnLabel(zni)}</span>
             </div>
           </div>
           <p className="task-list-title-full selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
@@ -1338,7 +1485,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
         </div>
         <div className="task-kind-row">
           <span className="task-kind-badge task-kind-req">Требование</span>
-          <div className={`task-column-pill ${stateColorClass(requirementColumnLabel(requirement))}`}>
+          <div className={`task-column-pill ${columnColorClass(requirementColumnLabel(requirement))}`}>
             <span className="task-column-pill-label">Колонка</span>
             <span className="task-column-pill-value">{requirementColumnLabel(requirement)}</span>
           </div>
@@ -1354,6 +1501,54 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   }
 
   const renderTimelineCell = (row: TaskRow) => {
+    if (row.type === 'error') {
+      const parent = row.item
+      const error = row.error
+      const errHref = workItemHref(error)
+      const barLayout = errorTimelineBarLayout(
+        error,
+        parent,
+        fromDate,
+        toDate,
+        useUserStartDate,
+        requirementSortAxes,
+        schedulingOverrides,
+        errorsDisplayMode,
+      )
+      return (
+        <article className="sync-row sync-row-err roadmap-row roadmap-row-err">
+          <div className="timeline-zoom-track">
+            <div className="row-track">
+              <div
+                className="zni-span-ghost"
+                style={{ left: `${barLayout.span.left}%`, width: `${barLayout.span.width}%` }}
+                aria-hidden
+                title={`Срок ЗНИ #${parent.id}`}
+              />
+              <div
+                className={`bar bar-error ${barLayout.byStatus ? 'bar-error-by-status' : ''} ${columnBarClass(barLayout.label)}`}
+                style={{
+                  left: `${barLayout.left}%`,
+                  width: `${barLayout.width}%`,
+                  minWidth: barLayout.byStatus ? '88px' : '100px',
+                }}
+                title={`${barLayout.label}\n${error.title}`}
+              >
+                <div className="bar-text">
+                  <span className="bar-kind-badge bar-kind-err">Ошибка</span>
+                  <span className="bar-status">{barLayout.label}</span>
+                  <span className="bar-label selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
+                    <b>↳ #{error.id}</b> {error.title || 'Без названия'}
+                  </span>
+                </div>
+                {errHref ? <TfsLink href={errHref} className="bar-tfs-link" /> : null}
+              </div>
+            </div>
+          </div>
+        </article>
+      )
+    }
+
     if (row.type === 'zni') {
       const zni = row.item
       const isActive = selectedItemId === zni.id && selectedRequirementId === null
@@ -1375,7 +1570,8 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
               useUserStartDate={useUserStartDate}
               override={override}
               isPending={isPending}
-              statusClassName={statusClass(zni.state)}
+              statusClassName={columnBarClass(zniColumnLabel(zni))}
+              columnLabel={zniColumnLabel(zni)}
               zoneTitle={zoneTitle(zni)}
               formatDate={formatDate}
               onDatesChange={onZniSchedulingDatesChange}
@@ -1436,7 +1632,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
               committed={reqEffective}
               isPending={reqPending}
               draggable
-              barClassName={`bar bar-req bar-schedule ${statusClass(requirementColumnLabel(requirement))}`}
+              barClassName={`bar bar-req bar-schedule ${columnBarClass(requirementColumnLabel(requirement))}`}
               title={`${barTitle}${reqPending ? '\nИзменено локально — нажмите «Обновить статусы в TFS»' : ''}\nКрай — изменить срок · центр — сдвинуть`}
               onDatesChange={(startDate, targetDate) =>
                 onRequirementSchedulingDatesChange(requirement.id, startDate, targetDate)
@@ -1467,7 +1663,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
                 />
               ) : null}
               <div
-                className={`bar bar-req ${useCompactBar ? 'bar-req-by-status' : ''} ${statusClass(requirementColumnLabel(requirement))}`}
+                className={`bar bar-req ${useCompactBar ? 'bar-req-by-status' : ''} ${columnBarClass(requirementColumnLabel(requirement))}`}
                 style={{
                   left: `${barLayout.left}%`,
                   width: `${barLayout.width}%`,
@@ -1499,11 +1695,39 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     )
   }
 
-  const timelineHead = (
-    <>
-      <div className="timeline-head-meta">
+  const timelineToolbar = (
+    <div className="timeline-toolbar-row">
+      <div className="timeline-toolbar-task-spacer" aria-hidden />
+      <div className="timeline-toolbar-main">
         <span className="timeline-period">{formatDate(fromDate)} — {formatDate(toDate)}</span>
         <div className="timeline-head-actions">
+          <div className="timeline-head-primary-toggles">
+            <ReleasesDisplayToggle
+              showReleases={showReleases}
+              displayMode={releasesDisplayMode}
+              releaseCount={releaseMarkers.length}
+              onChange={(choice) => {
+                if (choice === 'hidden') {
+                  setShowReleases(false)
+                  return
+                }
+                setShowReleases(true)
+                setReleasesDisplayMode(choice)
+              }}
+            />
+            <ErrorsDisplayToggle
+              showErrors={showErrors}
+              displayMode={errorsDisplayMode}
+              onChange={(choice) => {
+                if (choice === 'hidden') {
+                  setShowErrors(false)
+                  return
+                }
+                setShowErrors(true)
+                setErrorsDisplayMode(choice)
+              }}
+            />
+          </div>
           <button
             type="button"
             className={`timeline-head-toggle ${requirementSortAxes.byStatus ? 'is-on' : ''}`}
@@ -1535,18 +1759,25 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
             {loading
               ? 'Загрузка…'
               : isStartDateFiltering
-                ? `${visibleItems.length} / ${startDateZniCount} ЗНИ (Start Date)`
-                : isTagFiltering
-                  ? `${tagFilteredItems.length} / ${boardFilteredItems.length} ЗНИ (теги)`
-                  : isBoardSelectionFiltering
-                    ? `${boardFilteredItems.length} / ${visibleItems.length} ЗНИ (доски)`
-                    : isStatusFiltering
-                      ? `${visibleItems.length} / ${totalItems.length} ЗНИ`
-                      : `${visibleItems.length} ЗНИ`}
+                ? `${tagFilteredItems.length} / ${startDateZniCount} ЗНИ (Start Date)`
+                : isZniSearchFiltering
+                  ? `${tagFilteredItems.length} / ${searchScopedItems.length} ЗНИ (поиск)`
+                  : isTagFiltering
+                    ? `${tagFilteredItems.length} / ${tagScopedItems.length} ЗНИ (теги)`
+                    : isBoardSelectionFiltering
+                      ? `${tagScopedItems.length} / ${startDateScopedItems.length} ЗНИ (доски)`
+                      : isColumnFiltering
+                        ? `${tagFilteredItems.length} / ${searchScopedItems.length} ЗНИ (колонки)`
+                        : `${tagFilteredItems.length} ЗНИ`}
             {data?.generatedAt ? ` · обновлено ${formatDate(data.generatedAt)}` : ''}
           </span>
         </div>
       </div>
+    </div>
+  )
+
+  const timelineHead = (
+    <>
       <div ref={timelineRef} className="timeline-ruler">
         <div className="timeline-months">
           {monthRulerTicks.map((tick) => (
@@ -1642,6 +1873,28 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
                 ↻
               </button>
             </div>
+            <span className="filter-bar-sep" />
+            <div className="filter-bar-search">
+              <input
+                type="search"
+                className="filter-bar-input filter-bar-zni-search"
+                placeholder="Поиск ЗНИ: #id, название, релиз…"
+                value={zniSearchQuery}
+                onChange={(event) => setZniSearchQuery(event.target.value)}
+                aria-label="Поиск по ЗНИ"
+              />
+              {zniSearchQuery.trim() ? (
+                <button
+                  type="button"
+                  className="board-action-btn board-search-clear"
+                  title="Очистить поиск"
+                  aria-label="Очистить поиск"
+                  onClick={() => setZniSearchQuery('')}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
           </div>
           <div className="header-actions">
             <button
@@ -1684,32 +1937,70 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
             </button>
           </div>
         </div>
-        <div className="status-strip">
-          {stateOrder.map((state) => {
-            const active = isStateVisible(state, hiddenStates)
-            return (
-              <button
-                key={state}
-                type="button"
-                className={`status-filter ${stateColorClass(state)} ${active ? 'is-on' : 'is-off'}`}
-                title={active ? `Скрыть «${state}»` : `Показать «${state}»`}
-                aria-pressed={active}
-                onClick={() => toggleHiddenState(state)}
-              >
-                {state}
-              </button>
-            )
-          })}
-          {isStatusFiltering && (
-            <button type="button" className="status-filter-reset" onClick={() => setHiddenStates([])}>
-              Показать все статусы
+        <div className="status-strip column-filter-strip">
+          {useMergedColumnFilters ? (
+            <div className="column-filter-board">
+              <span className="filter-strip-label">Колонки</span>
+              <div className="column-filter-board-chips">
+                {mergedColumnFilters.map((entry) => {
+                  const key = columnNameFilterKey(entry.column)
+                  const active = isColumnKeyVisible(key, hiddenColumnKeys)
+                  const boardsHint =
+                    entry.boardNames.length > 1 ? entry.boardNames.join(', ') : entry.boardNames[0] ?? ''
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`status-filter ${columnColorClass(entry.column)} ${active ? 'is-on' : 'is-off'}`}
+                      title={
+                        active
+                          ? `Скрыть «${entry.column}»${boardsHint ? ` · доски: ${boardsHint}` : ''}`
+                          : `Показать «${entry.column}»${boardsHint ? ` · доски: ${boardsHint}` : ''}`
+                      }
+                      aria-pressed={active}
+                      onClick={() => toggleHiddenColumn(entry.column)}
+                    >
+                      {entry.column}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : (
+            columnFiltersByBoard.map((group) => (
+              <div key={group.boardId ?? '_none'} className="column-filter-board">
+                <span className="filter-strip-label">Колонки</span>
+                <div className="column-filter-board-chips">
+                  {group.columns.map((column) => {
+                    const key = columnNameFilterKey(column)
+                    const active = isColumnKeyVisible(key, hiddenColumnKeys)
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        className={`status-filter ${columnColorClass(column)} ${active ? 'is-on' : 'is-off'}`}
+                        title={active ? `Скрыть колонку «${column}»` : `Показать колонку «${column}»`}
+                        aria-pressed={active}
+                        onClick={() => toggleHiddenColumn(column)}
+                      >
+                        {column}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))
+          )}
+          {isColumnFiltering && (
+            <button type="button" className="status-filter-reset" onClick={() => setHiddenColumnKeys([])}>
+              Показать все колонки
             </button>
           )}
           <span className="filter-strip-sep" aria-hidden />
           <span className="filter-strip-label">Теги</span>
           <TagFilterStrip
             tags={availableTags}
-            selectedTags={selectedTags}
+            selectedTags={activeSelectedTags}
             onToggle={toggleSelectedTag}
             onClear={() => setSelectedTags([])}
           />
@@ -1732,9 +2023,10 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
         onPointerCancel={onTimelinePointerUp}
       >
         {error && <div className="error">{error}</div>}
+        {timelineToolbar}
         <RoadmapGrid
           groups={groups}
-          hiddenStates={hiddenStates}
+          hiddenStates={hiddenColumnKeys}
           expandedZniIds={expandedZniIds}
           taskRowKey={taskRowKey}
           renderTaskCell={renderTaskCell}
@@ -1747,26 +2039,30 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           emptyState={
             <div className="task-list-empty">
               <strong>
-                {isTagFiltering
-                  ? 'Нет ЗНИ с выбранными тегами'
-                  : isBoardSelectionFiltering
-                    ? 'Нет ЗНИ для выбранных досок'
-                    : isStartDateFiltering
-                      ? 'Нет ЗНИ с Start Date'
-                      : isStatusFiltering
-                        ? 'Нет ЗНИ с видимыми статусами'
-                        : 'Нет ЗНИ за период'}
+                {isZniSearchFiltering
+                  ? 'Нет ЗНИ по запросу'
+                  : isTagFiltering
+                    ? 'Нет ЗНИ с выбранными тегами'
+                    : isBoardSelectionFiltering
+                      ? 'Нет ЗНИ для выбранных досок'
+                      : isStartDateFiltering
+                        ? 'Нет ЗНИ с Start Date'
+                        : isColumnFiltering
+                          ? 'Нет ЗНИ с видимыми колонками'
+                          : 'Нет ЗНИ за период'}
               </strong>
               <p>
-                {isTagFiltering
-                  ? 'Включите другие теги в «Теги» или нажмите «Сбросить фильтр».'
-                  : isBoardSelectionFiltering
-                    ? 'Откройте выбор досок и отметьте нужные, либо нажмите «Все доски».'
-                    : isStartDateFiltering
-                      ? 'У видимых ЗНИ в TFS не заполнено поле Start Date, или отключите фильтр «Только Start Date».'
-                      : isStatusFiltering
-                        ? 'Включите статусы в шапке или нажмите «Показать все статусы».'
-                        : 'Нажмите «Выгрузить» или «Обновить» для загрузки из TFS.'}
+                {isZniSearchFiltering
+                  ? 'Измените запрос в поле поиска или очистите его кнопкой ×.'
+                  : isTagFiltering
+                    ? 'Включите другие теги в «Теги» или нажмите «Сбросить фильтр».'
+                    : isBoardSelectionFiltering
+                      ? 'Откройте выбор досок и отметьте нужные, либо нажмите «Все доски».'
+                      : isStartDateFiltering
+                        ? 'У видимых ЗНИ в TFS не заполнено поле Start Date, или отключите фильтр «Только Start Date».'
+                        : isColumnFiltering
+                          ? 'Включите колонки в шапке или нажмите «Показать все колонки».'
+                          : 'Нажмите «Выгрузить» или «Обновить» для загрузки из TFS.'}
               </p>
             </div>
           }
@@ -1774,6 +2070,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           bindRowRef={bindRowRef}
           isTodayVisible={isTodayVisible}
           todayLeft={todayLeft}
+          releaseMarkers={visibleReleaseMarkers}
         />
       </section>
     </main>

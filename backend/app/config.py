@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     )
     tfs_change_type_values: str = Field(default="Запрос на изменение", alias="TFS_CHANGE_TYPE_VALUES")
     tfs_requirement_type_values: str = Field(default="Требование", alias="TFS_REQUIREMENT_TYPE_VALUES")
+    tfs_error_type_values: str = Field(default="Ошибка", alias="TFS_ERROR_TYPE_VALUES")
+    tfs_kanban_backlog_name: str = Field(
+        default="Запросы на изменение",
+        alias="TFS_KANBAN_BACKLOG_NAME",
+        description="Название backlog level на Kanban-доске команды для ЗНИ.",
+    )
+    tfs_fetch_board_columns: bool = Field(default=True, alias="TFS_FETCH_BOARD_COLUMNS")
     sync_button_cooldown_seconds: int = Field(default=30, alias="SYNC_BUTTON_COOLDOWN_SECONDS")
     app_public_url: str = Field(default="http://localhost:5173", alias="APP_PUBLIC_URL")
     api_public_url: str = Field(default="http://localhost:8000", alias="API_PUBLIC_URL")
@@ -121,6 +128,11 @@ class Settings(BaseSettings):
     @property
     def requirement_type_list(self) -> list[str]:
         return [item.strip() for item in self.tfs_requirement_type_values.split(",") if item.strip()]
+
+    @computed_field
+    @property
+    def error_type_list(self) -> list[str]:
+        return [item.strip() for item in self.tfs_error_type_values.split(",") if item.strip()]
 
 
 settings = Settings()

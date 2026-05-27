@@ -1,11 +1,13 @@
 import type { CSSProperties, ReactNode } from 'react'
-import type { ChangeRequest, Requirement } from './roadmapTypes'
+import type { ReleaseTimelineMarker } from './releaseUtils'
+import type { ChangeRequest, LinkedError, Requirement } from './roadmapTypes'
 
-export type { ChangeRequest, Requirement } from './roadmapTypes'
+export type { ChangeRequest, LinkedError, Requirement } from './roadmapTypes'
 
 export type TaskRow =
   | { type: 'zni'; item: ChangeRequest }
   | { type: 'requirement'; item: ChangeRequest; requirement: Requirement }
+  | { type: 'error'; item: ChangeRequest; error: LinkedError; requirement?: Requirement }
 
 export type BoardGroup = {
   key: string
@@ -36,6 +38,7 @@ type RoadmapGridProps = {
   bindRowRef: (rowKey: string) => (node: HTMLElement | null) => void
   isTodayVisible: boolean
   todayLeft: number
+  releaseMarkers: ReleaseTimelineMarker[]
 }
 
 export default function RoadmapGrid({
@@ -55,13 +58,25 @@ export default function RoadmapGrid({
   bindRowRef,
   isTodayVisible,
   todayLeft,
+  releaseMarkers,
 }: RoadmapGridProps) {
+  const hasTimelineMarkers = isTodayVisible || releaseMarkers.length > 0
   return (
     <div className="roadmap-workspace">
       <div className="sync-sheet">
-        {isTodayVisible && (
-          <div className="timeline-today-layer" style={{ '--today-left': `${todayLeft}%` } as CSSProperties}>
-            <div className="today-line-sheet" aria-hidden />
+        {hasTimelineMarkers && (
+          <div className="timeline-today-layer" aria-hidden>
+            {releaseMarkers.map((release) => (
+              <div
+                key={release.label}
+                className="release-line-sheet"
+                style={{ '--release-left': `${release.left}%` } as CSSProperties}
+                title={`Релиз ${release.label}`}
+              />
+            ))}
+            {isTodayVisible && (
+              <div className="today-line-sheet" style={{ '--today-left': `${todayLeft}%` } as CSSProperties} />
+            )}
           </div>
         )}
         <div

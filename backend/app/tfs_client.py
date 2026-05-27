@@ -10,6 +10,11 @@ from urllib.parse import quote
 import httpx
 from dateutil.parser import parse as parse_datetime
 
+from app.board_kanban import (
+    board_column_resolve_candidates,
+    column_names_from_payload,
+    pick_backlog_for_change_requests,
+)
 from app.board_mapping import guess_area_path_from_board_name
 from app.config import settings
 from app.http_auth import build_http_auth
@@ -427,6 +432,112 @@ class TfsClient:
             response.raise_for_status()
         return guess_area_path_from_board_name(team_name, self.project)
 
+    async def list_team_backlogs(self, team_name: str) -> list[dict[str, Any]]:
+        segment = quote(team_name, safe="")
+        for api_version in _api_version_candidates():
+            response = await self.client.get(
+                f"/{self.project}/{segment}/_apis/work/backlogs",
+                params={"api-version": api_version},
+            )
+            if response.status_code == 200:
+                payload = as_json_dict(response.json())
+                rows = payload.get("value", [])
+                return [row for row in rows if isinstance(row, dict)]
+            if response.status_code in {400, 404}:
+                continue
+            response.raise_for_status()
+        return []
+
+    async def list_team_boards(self, team_name: str) -> list[dict[str, Any]]:
+        segment = quote(team_name, safe="")
+        for api_version in _api_version_candidates():
+            response = await self.client.get(
+                f"/{self.project}/{segment}/_apis/work/boards",
+                params={"api-version": api_version},
+            )
+            if response.status_code == 200:
+                payload = as_json_dict(response.json())
+                rows = payload.get("value", [])
+                return [row for row in rows if isinstance(row, dict)]
+            if response.status_code in {400, 404}:
+                continue
+            response.raise_for_status()
+        return []
+
+    async def list_board_column_names(self, team_name: str, board_id: str) -> list[str]:
+        segment = quote(team_name, safe="")
+        board_segment = quote(board_id, safe="")
+        for api_version in _api_version_candidates():
+            response = await self.client.get(
+                f"/{self.project}/{segment}/_apis/work/boards/{board_segment}/columns",
+                params={"api-version": api_version},
+            )
+            if response.status_code == 200:
+                return column_names_from_payload(as_json_dict(response.json()))
+            if response.status_code in {400, 404}:
+                continue
+            response.raise_for_status()
+        return []
+
+    async def get_change_request_board_columns(self, team_name: str) -> list[str]:
+        backlogs = await self.list_team_backlogs(team_name)
+        backlog = pick_backlog_for_change_requests(backlogs, settings.tfs_kanban_backlog_name)
+        if not backlog:
+            return []
+
+        best_columns: list[str] = []
+        tried: set[str] = set()
+
+        async def try_board(board_key: str) -> None:
+            nonlocal best_columns
+            key = board_key.strip()
+            if not key or key in tried:
+                return
+            tried.add(key)
+            columns = await self.list_board_column_names(team_name, key)
+            if len(columns) > len(best_columns):
+                best_columns = columns
+
+        for candidate in board_column_resolve_candidates(backlog):
+            await try_board(candidate)
+
+        backlog_name = str(backlog.get("name") or "").strip().lower()
+        for board in await self.list_team_boards(team_name):
+            board_id = str(board.get("id") or "").strip()
+            board_name = str(board.get("name") or "").strip().lower()
+            if not board_id:
+                continue
+            if backlog_name and (
+                backlog_name == board_name
+                or backlog_name in board_name
+                or board_name in backlog_name
+            ):
+                await try_board(board_id)
+
+        return best_columns
+
+    async def enrich_board_kanban_columns(self, boards: list[dict[str, Any]]) -> None:
+        if not settings.tfs_fetch_board_columns or not boards:
+            return
+
+        semaphore = asyncio.Semaphore(6)
+
+        async def enrich_one(board: dict[str, Any]) -> None:
+            if not self.is_team_board(board):
+                return
+            name = str(board.get("name") or "").strip()
+            if not name:
+                return
+            async with semaphore:
+                columns = await self.get_change_request_board_columns(name)
+                if columns:
+                    from app.board_kanban import merge_board_kanban_columns
+
+                    merge_board_kanban_columns(board, columns)
+                await asyncio.sleep(settings.tfs_request_delay_seconds)
+
+        await asyncio.gather(*(enrich_one(board) for board in boards))
+
     async def enrich_board_area_paths(self, boards: list[dict[str, Any]]) -> None:
         """Быстрое обогащение: эвристика для всех, REST teamsettings — только для части."""
         if not boards:
@@ -525,6 +636,13 @@ class TfsClient:
             notes.append(f"area-paths: {sum(1 for board in boards if board.get('area_path'))}/{len(boards)}")
         except Exception as exc:
             notes.append(f"area-paths: {exc}")
+        try:
+            await self.enrich_board_kanban_columns(boards)
+            notes.append(
+                f"kanban-columns: {sum(1 for board in boards if (board.get('raw') or {}).get('kanban_columns'))}/{len(boards)}"
+            )
+        except Exception as exc:
+            notes.append(f"kanban-columns: {exc}")
 
         return boards, notes
 

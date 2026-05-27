@@ -20,9 +20,10 @@ class BoardOut(ApiModel):
     project_name: str | None = None
     href: str | None = None
     area_path: str | None = None
+    columns: list[str] = Field(default_factory=list)
 
 
-class RequirementOut(ApiModel):
+class LinkedErrorOut(ApiModel):
     id: int
     title: str
     state: str
@@ -30,14 +31,28 @@ class RequirementOut(ApiModel):
     assignee: str | None = None
     assignee_avatar_url: str | None = None
     tfs_url: str | None = None
+
+
+class RequirementOut(ApiModel):
+    id: int
+    title: str
+    state: str
+    release: str | None = None
+    column: str | None = None
+    assignee: str | None = None
+    assignee_avatar_url: str | None = None
+    tfs_url: str | None = None
     start_date: date | None = None
     target_date: date | None = None
+    errors: list[LinkedErrorOut] = Field(default_factory=list)
 
 
 class ChangeRequestOut(ApiModel):
     id: int
     title: str
     state: str
+    release: str | None = None
+    column: str | None = None
     tags: list[str] = Field(default_factory=list)
     board_id: str | None = None
     board_name: str | None = None
@@ -49,6 +64,7 @@ class ChangeRequestOut(ApiModel):
     target_date: date
     user_start_date: date | None = None
     requirements: list[RequirementOut]
+    errors: list[LinkedErrorOut] = Field(default_factory=list)
 
 
 class RoadmapOut(ApiModel):

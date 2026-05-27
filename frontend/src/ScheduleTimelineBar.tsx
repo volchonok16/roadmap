@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   moveVisualByPointerDelta,
   pointerTimelinePercent,
@@ -91,9 +91,20 @@ export default function ScheduleTimelineBar({
   const [isDragging, setIsDragging] = useState(false)
   const [dragVisual, setDragVisual] = useState<TimelineBarVisual | null>(null)
   const [hoverMode, setHoverMode] = useState<DragMode | null>(null)
+  const [isNarrow, setIsNarrow] = useState(false)
 
   const baseVisual = schedulingToVisual(committed.startDate, committed.targetDate, fromDate, toDate)
   const displayVisual = dragVisual ?? baseVisual
+
+  useLayoutEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+    const update = () => setIsNarrow(bar.clientWidth < 156)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(bar)
+    return () => observer.disconnect()
+  }, [displayVisual.leftPct, displayVisual.widthPct])
 
   const beginDrag = (event: React.PointerEvent, mode: DragMode) => {
     if (!draggable || event.button !== 0) return
@@ -214,7 +225,7 @@ export default function ScheduleTimelineBar({
     <div className={`row-track ${isDragging ? 'row-track-schedule-drag' : ''}`} ref={trackRef}>
       <div
         ref={barRef}
-        className={`${barClassName} ${isPending ? 'bar-has-pending' : ''} ${isDragging ? 'bar-is-dragging' : ''} ${hoverMode === 'resize-start' ? 'bar-edge-start' : ''} ${hoverMode === 'resize-end' ? 'bar-edge-end' : ''}`}
+        className={`${barClassName} ${isPending ? 'bar-has-pending' : ''} ${isDragging ? 'bar-is-dragging' : ''} ${isNarrow ? 'bar-is-narrow' : ''} ${hoverMode === 'resize-start' ? 'bar-edge-start' : ''} ${hoverMode === 'resize-end' ? 'bar-edge-end' : ''}`}
         style={{
           left: `${displayVisual.leftPct}%`,
           width: `${displayVisual.widthPct}%`,

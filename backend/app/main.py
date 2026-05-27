@@ -23,16 +23,19 @@ from app.sync_service import (
     supplement_boards_from_area_paths,
     user_start_date_from_fields,
     work_item_kanban_column,
+    work_item_release_label,
     work_item_tags,
 )
 from app.db import Base, SessionLocal, engine, get_db
 from app.models import Board, SyncRun, WorkItem
+from app.board_kanban import kanban_columns_from_board_raw
 from app.scheduling_push import push_scheduling_items
 from app.schemas import (
     AuthDefaultsOut,
     AuthLoginOut,
     BoardOut,
     ChangeRequestOut,
+    LinkedErrorOut,
     RequirementOut,
     RoadmapOut,
     SchedulingPushIn,
@@ -219,10 +222,22 @@ async def avatar(url: str, tfs_auth: TfsAuth = Depends(require_tfs_auth)) -> Res
 
 
 def board_out(row: Board) -> BoardOut:
-    return BoardOut(id=row.id, name=row.name, project_id=row.project_id, project_name=row.project_name, href=row.href, area_path=row.area_path)
+    return BoardOut(
+        id=row.id,
+        name=row.name,
+        project_id=row.project_id,
+        project_name=row.project_name,
+        href=row.href,
+        area_path=row.area_path,
+        columns=kanban_columns_from_board_raw(row.raw if isinstance(row.raw, dict) else None),
+    )
 
 
 def board_out_from_payload(board: dict) -> BoardOut:
+    raw = board.get("raw") if isinstance(board.get("raw"), dict) else board
+    columns = board.get("kanban_columns")
+    if not isinstance(columns, list):
+        columns = kanban_columns_from_board_raw(raw if isinstance(raw, dict) else None)
     return BoardOut(
         id=str(board["id"]),
         name=str(board.get("name") or board["id"]),
@@ -230,6 +245,7 @@ def board_out_from_payload(board: dict) -> BoardOut:
         project_name=board.get("project_name"),
         href=board.get("href"),
         area_path=board.get("area_path"),
+        columns=[str(item).strip() for item in columns if str(item).strip()],
     )
 
 
@@ -445,6 +461,32 @@ def roadmap(
         .all()
     )
 
+    parent_ids = {row.id for row in change_rows} | {row.id for row in requirement_rows}
+    error_rows = (
+        db.query(WorkItem)
+        .filter(
+            WorkItem.work_item_type.in_(settings.error_type_list),
+            WorkItem.parent_id.in_(list(parent_ids) or [-1]),
+        )
+        .order_by(WorkItem.id)
+        .all()
+    )
+    errors_by_parent: dict[int, list[LinkedErrorOut]] = {}
+    for row in error_rows:
+        if row.parent_id is None:
+            continue
+        errors_by_parent.setdefault(row.parent_id, []).append(
+            LinkedErrorOut(
+                id=row.id,
+                title=row.title,
+                state=row.state,
+                column=work_item_kanban_column(row.fields),
+                assignee=row.assigned_to_name,
+                assignee_avatar_url=row.assigned_to_avatar_url,
+                tfs_url=work_item_url(row, tfs_auth),
+            )
+        )
+
     requirements_by_parent: dict[int, list[RequirementOut]] = {}
     for row in requirement_rows:
         if row.parent_id is None:
@@ -454,12 +496,14 @@ def roadmap(
                 id=row.id,
                 title=row.title,
                 state=row.state,
+                release=work_item_release_label(row.fields),
                 column=work_item_kanban_column(row.fields),
                 assignee=row.assigned_to_name,
                 assignee_avatar_url=row.assigned_to_avatar_url,
                 tfs_url=work_item_url(row, tfs_auth),
                 start_date=row.start_date,
                 target_date=row.target_date,
+                errors=errors_by_parent.get(row.id, []),
             )
         )
 
@@ -470,6 +514,8 @@ def roadmap(
             id=row.id,
             title=row.title,
             state=row.state,
+            release=work_item_release_label(row.fields),
+            column=work_item_kanban_column(row.fields),
             tags=work_item_tags(row.fields),
             board_id=row.board_id,
             board_name=(
@@ -485,6 +531,7 @@ def roadmap(
             target_date=row.target_date,
             user_start_date=user_start_date_from_fields(row.fields or {}),
             requirements=requirements_by_parent.get(row.id, []),
+            errors=errors_by_parent.get(row.id, []),
         )
         for row in change_rows
         if row.start_date and row.target_date
