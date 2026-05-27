@@ -1,13 +1,46 @@
 """Сопоставление System.AreaPath с доской TFS (team board)."""
 from __future__ import annotations
 
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 
 class BoardLike(Protocol):
     id: str
     name: str
     area_path: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BoardSnapshot:
+    """Снимок доски без привязки к SQLAlchemy Session."""
+
+    id: str
+    name: str
+    area_path: str | None
+
+
+def board_snapshots_from_rows(rows: list[Any]) -> list[BoardSnapshot]:
+    return [
+        BoardSnapshot(id=row.id, name=row.name, area_path=row.area_path)
+        for row in rows
+    ]
+
+
+def board_snapshots_from_payloads(items: list[dict[str, Any]]) -> list[BoardSnapshot]:
+    result: list[BoardSnapshot] = []
+    for item in items:
+        board_id = item.get("id")
+        if not isinstance(board_id, str):
+            continue
+        result.append(
+            BoardSnapshot(
+                id=board_id,
+                name=str(item.get("name") or board_id),
+                area_path=item.get("area_path") if isinstance(item.get("area_path"), str) else None,
+            )
+        )
+    return result
 
 
 def normalize_area_path(area_path: str) -> str:

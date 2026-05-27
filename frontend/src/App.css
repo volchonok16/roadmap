@@ -186,6 +186,7 @@ body.is-resizing-sidebar .sheet-resizer {
   justify-content: flex-end;
 }
 
+.timeline-head-toggle,
 .timeline-start-toggle {
   border: 1px solid #c5d2e4;
   border-radius: 8px;
@@ -202,11 +203,13 @@ body.is-resizing-sidebar .sheet-resizer {
     color 0.15s ease;
 }
 
+.timeline-head-toggle:hover,
 .timeline-start-toggle:hover {
   border-color: var(--accent);
   color: #2f4f8f;
 }
 
+.timeline-head-toggle.is-on,
 .timeline-start-toggle.is-on {
   background: #e8f0fc;
   border-color: #7ba3e0;
@@ -2048,6 +2051,25 @@ h2 {
 
 .roadmap-row-req .row-track {
   background: rgba(237, 233, 254, 0.35);
+}
+
+.roadmap-row-req .row-track-req-stair {
+  background: rgba(237, 233, 254, 0.35);
+}
+
+.roadmap-row-req .zni-span-ghost {
+  position: absolute;
+  top: 18%;
+  height: 64%;
+  border: 1px dashed rgba(79, 70, 229, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+
+.roadmap-row-req .bar-req-by-status {
+  min-height: 40px;
+  box-shadow: 0 2px 8px rgba(61, 71, 86, 0.14);
 }
 
 .roadmap-row-req .bar-req {

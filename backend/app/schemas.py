@@ -26,6 +26,7 @@ class RequirementOut(ApiModel):
     id: int
     title: str
     state: str
+    column: str | None = None
     assignee: str | None = None
     assignee_avatar_url: str | None = None
     tfs_url: str | None = None

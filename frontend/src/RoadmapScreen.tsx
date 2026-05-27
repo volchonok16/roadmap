@@ -44,8 +44,69 @@ type Scale = PeriodScale
 const dayMs = 24 * 60 * 60 * 1000
 
 const stateOrder = ['New', 'Backlog', 'Express Analysis', 'Analysis Backlog', 'Analysis', 'Development', 'UAT', 'Pilot', 'Closed']
+
+/**
+ * Порядок колонок на доске «Требования» в TFS (слева → справа).
+ * См. Kanban: Backlog → Full Analysis → … → Closed.
+ */
+const requirementColumnOrder = [
+  'Backlog',
+  'Full Analysis',
+  'Requirement Review',
+  'Development Backlog',
+  'Development',
+  'Code Review Backlog',
+  'Code Review',
+  'Test Backlog',
+  'Test',
+  'Test Review',
+  'Acceptance',
+  'Merge-Backlog',
+  'Merge',
+  'Closed',
+  'New',
+  'Merged',
+]
+
+const requirementColumnAliases: Record<string, string> = {
+  'requirement review': 'Requirement Review',
+  'code review backlog': 'Code Review Backlog',
+  'code-review backlog': 'Code Review Backlog',
+  'code review': 'Code Review',
+  'code-review': 'Code Review',
+  'test backlog': 'Test Backlog',
+  'test review': 'Test Review',
+  'merge-backlog': 'Merge-Backlog',
+  'merge backlog': 'Merge-Backlog',
+  merged: 'Merge',
+  '11. closed': 'Closed',
+  'arch/full analysis': 'Full Analysis',
+  'analysis backlog': 'Full Analysis',
+}
+
+function normalizeRequirementColumn(label: string) {
+  const trimmed = label.trim()
+  if (!trimmed) return trimmed
+  const alias = requirementColumnAliases[trimmed.toLowerCase()]
+  if (alias) return alias
+  const exact = requirementColumnOrder.find((item) => item.toLowerCase() === trimmed.toLowerCase())
+  return exact ?? trimmed
+}
+
+function requirementColumnLabel(requirement: Requirement) {
+  const raw = requirement.column?.trim() || requirement.state
+  return normalizeRequirementColumn(raw)
+}
 const SIDEBAR_WIDTH_KEY = 'roadmap-sidebar-width'
 const USE_USER_START_DATE_KEY = 'roadmap-use-user-start-date'
+const REQUIREMENT_SORT_KEY = 'roadmap-requirement-sort'
+const REQUIREMENT_SORT_STATUS_KEY = 'roadmap-requirement-sort-status'
+const REQUIREMENT_SORT_DATE_KEY = 'roadmap-requirement-sort-date'
+
+type RequirementSortAxes = {
+  byStatus: boolean
+  byDate: boolean
+}
 const SIDEBAR_MIN_WIDTH = 220
 const SIDEBAR_MAX_WIDTH = 420
 
@@ -59,6 +120,27 @@ function readSidebarWidth() {
 
 function readUseUserStartDate() {
   return localStorage.getItem(USE_USER_START_DATE_KEY) === '1'
+}
+
+function readRequirementSortAxes(): RequirementSortAxes {
+  const statusSaved = localStorage.getItem(REQUIREMENT_SORT_STATUS_KEY)
+  const dateSaved = localStorage.getItem(REQUIREMENT_SORT_DATE_KEY)
+  if (statusSaved !== null || dateSaved !== null) {
+    return {
+      byStatus: statusSaved !== '0',
+      byDate: dateSaved !== '0',
+    }
+  }
+  const legacy = localStorage.getItem(REQUIREMENT_SORT_KEY)
+  if (legacy === 'date') return { byStatus: false, byDate: true }
+  if (legacy === 'both') return { byStatus: true, byDate: true }
+  return { byStatus: true, byDate: false }
+}
+
+function toggleRequirementSortAxis(axes: RequirementSortAxes, axis: keyof RequirementSortAxes): RequirementSortAxes {
+  const next = { ...axes, [axis]: !axes[axis] }
+  if (!next.byStatus && !next.byDate) return axes
+  return next
 }
 
 function barStartDate(startDate: string, userStartDate: string | null | undefined, useUserStartDate: boolean) {
@@ -78,10 +160,172 @@ function visibleRequirements(requirements: Requirement[], hiddenStates: string[]
   return requirements.filter((requirement) => isStateVisible(requirement.state, hiddenStates))
 }
 
-function buildTaskRows(item: ChangeRequest, hiddenStates: string[], expandedZniIds: Set<number>) {
+function requirementStatusSortIndex(state: string) {
+  const normalized = state.trim()
+  const exact = stateOrder.findIndex((item) => item.toLowerCase() === normalized.toLowerCase())
+  if (exact >= 0) return exact
+  const lower = normalized.toLowerCase()
+  if (lower.includes('new')) return 0
+  if (lower.includes('closed') || lower.includes('done') || lower.includes('merged')) return stateOrder.length - 1
+  if (lower.includes('pilot')) return stateOrder.indexOf('Pilot')
+  if (lower.includes('uat') || lower.includes('test')) return stateOrder.indexOf('UAT')
+  if (lower.includes('develop') || lower.includes('code-review')) return stateOrder.indexOf('Development')
+  if (lower.includes('express')) return stateOrder.indexOf('Express Analysis')
+  if (lower.includes('architecture')) return stateOrder.indexOf('Analysis')
+  if (lower.includes('backlog') && lower.includes('analysis')) return stateOrder.indexOf('Analysis Backlog')
+  if (lower.includes('backlog')) return stateOrder.indexOf('Backlog')
+  if (lower.includes('analysis') || lower.includes('analyt') || lower.includes('review')) return stateOrder.indexOf('Analysis')
+  return stateOrder.length
+}
+
+function requirementColumnSortIndex(label: string) {
+  const normalized = normalizeRequirementColumn(label)
+  const exact = requirementColumnOrder.findIndex(
+    (item) => item.toLowerCase() === normalized.toLowerCase(),
+  )
+  if (exact >= 0) return exact
+  const lower = normalized.toLowerCase()
+  if (lower.includes('accept')) return requirementColumnOrder.indexOf('Acceptance')
+  if (lower.includes('merge') && lower.includes('backlog')) return requirementColumnOrder.indexOf('Merge-Backlog')
+  if (lower.includes('merge')) return requirementColumnOrder.indexOf('Merge')
+  if (lower.includes('test') && lower.includes('review')) return requirementColumnOrder.indexOf('Test Review')
+  if (lower.includes('test') && lower.includes('backlog')) return requirementColumnOrder.indexOf('Test Backlog')
+  if (lower === 'test' || lower.startsWith('test ')) return requirementColumnOrder.indexOf('Test')
+  if (lower.includes('code') && lower.includes('backlog')) return requirementColumnOrder.indexOf('Code Review Backlog')
+  if (lower.includes('code') && lower.includes('review')) return requirementColumnOrder.indexOf('Code Review')
+  if (lower.includes('develop') && lower.includes('backlog')) return requirementColumnOrder.indexOf('Development Backlog')
+  if (lower.includes('develop')) return requirementColumnOrder.indexOf('Development')
+  if (lower.includes('requirement') && lower.includes('review')) return requirementColumnOrder.indexOf('Requirement Review')
+  if (lower.includes('full') && lower.includes('analysis')) return requirementColumnOrder.indexOf('Full Analysis')
+  if (lower.includes('backlog')) return requirementColumnOrder.indexOf('Backlog')
+  if (lower.includes('closed')) return requirementColumnOrder.indexOf('Closed')
+  return requirementColumnOrder.length + requirementStatusSortIndex(normalized)
+}
+
+function requirementStatusLaneFraction(label: string) {
+  const maxIdx = Math.max(requirementColumnOrder.length - 1, 1)
+  return clamp(requirementColumnSortIndex(label) / maxIdx, 0, 1)
+}
+
+function zniSpanOnTimeline(parent: ChangeRequest, fromDate: Date, toDate: Date, useUserStartDate: boolean) {
+  const zniStart = barStartDate(parent.startDate, parent.userStartDate, useUserStartDate)
+  const zniEnd = parent.targetDate
+  return {
+    left: progressLeft(zniStart, fromDate, toDate),
+    width: progressWidth(zniStart, zniEnd, fromDate, toDate),
+  }
+}
+
+type RequirementBarLayout =
+  | { mode: 'date'; left: number; width: number; span: null }
+  | { mode: 'status'; left: number; width: number; span: { left: number; width: number } }
+  | { mode: 'combined'; left: number; width: number; span: null }
+
+function requirementDateBarOnTimeline(
+  reqStart: string,
+  reqEnd: string,
+  fromDate: Date,
+  toDate: Date,
+) {
+  return {
+    left: progressLeft(reqStart, fromDate, toDate),
+    width: progressWidth(reqStart, reqEnd, fromDate, toDate),
+  }
+}
+
+function requirementTimelineBarLayout(
+  requirement: Requirement,
+  parent: ChangeRequest,
+  fromDate: Date,
+  toDate: Date,
+  useUserStartDate: boolean,
+  sortAxes: RequirementSortAxes,
+): RequirementBarLayout {
+  const reqStart = barStartDate(
+    requirement.startDate ?? parent.startDate,
+    parent.userStartDate,
+    useUserStartDate,
+  )
+  const reqEnd = requirement.targetDate ?? parent.targetDate
+
+  // По дате (или оба): колбаска от Start Date до плановой/конечной даты на шкале времени.
+  if (sortAxes.byDate) {
+    const bar = requirementDateBarOnTimeline(reqStart, reqEnd, fromDate, toDate)
+    return {
+      mode: sortAxes.byStatus ? 'combined' : 'date',
+      left: bar.left,
+      width: bar.width,
+      span: null,
+    }
+  }
+
+  // Только по статусу: компактный маркер внутри срока ЗНИ (New слева → Closed справа).
+  const span = zniSpanOnTimeline(parent, fromDate, toDate, useUserStartDate)
+  const pillWidth = clamp(span.width * 0.2, 8, Math.min(span.width * 0.85, 22))
+  const avail = Math.max(span.width - pillWidth, 0)
+    const fraction = requirementStatusLaneFraction(requirementColumnLabel(requirement))
+  const innerLeft = fraction >= 0.999 ? avail : fraction * avail
+
+  return {
+    mode: 'status',
+    left: span.left + innerLeft,
+    width: pillWidth,
+    span,
+  }
+}
+
+function requirementSortStart(
+  requirement: Requirement,
+  parent: ChangeRequest,
+  useUserStartDate: boolean,
+) {
+  return new Date(
+    barStartDate(requirement.startDate ?? parent.startDate, parent.userStartDate, useUserStartDate),
+  ).getTime()
+}
+
+function sortedVisibleRequirements(
+  requirements: Requirement[],
+  parent: ChangeRequest,
+  hiddenStates: string[],
+  sortAxes: RequirementSortAxes,
+  useUserStartDate: boolean,
+) {
+  const visible = visibleRequirements(requirements, hiddenStates)
+  const sorted = [...visible]
+  sorted.sort((a, b) => {
+    if (sortAxes.byStatus) {
+      const byState =
+        requirementColumnSortIndex(requirementColumnLabel(a)) -
+        requirementColumnSortIndex(requirementColumnLabel(b))
+      if (byState !== 0) return byState
+    }
+    if (sortAxes.byDate) {
+      const byDate =
+        requirementSortStart(a, parent, useUserStartDate) - requirementSortStart(b, parent, useUserStartDate)
+      if (byDate !== 0) return byDate
+    }
+    return a.id - b.id
+  })
+  return sorted
+}
+
+function buildTaskRows(
+  item: ChangeRequest,
+  hiddenStates: string[],
+  expandedZniIds: Set<number>,
+  sortAxes: RequirementSortAxes,
+  useUserStartDate: boolean,
+) {
   const rows: TaskRow[] = [{ type: 'zni', item }]
   if (!expandedZniIds.has(item.id)) return rows
-  for (const requirement of visibleRequirements(item.requirements, hiddenStates)) {
+  for (const requirement of sortedVisibleRequirements(
+    item.requirements,
+    item,
+    hiddenStates,
+    sortAxes,
+    useUserStartDate,
+  )) {
     rows.push({ type: 'requirement', item, requirement })
   }
   return rows
@@ -208,8 +452,30 @@ function stateColorClass(state: string) {
     case 'Done':
       return 'state-closed'
     case 'Full Analysis':
+    case 'Requirement Review':
       return 'state-analysis'
+    case 'Development Backlog':
+    case 'Development':
+      return 'state-development'
+    case 'Code Review Backlog':
+    case 'Code Review':
+      return 'state-development'
+    case 'Test Backlog':
+    case 'Test':
+    case 'Test Review':
+      return 'state-uat'
+    case 'Acceptance':
+      return 'state-pilot'
+    case 'Merge-Backlog':
+    case 'Merge':
+    case 'Merged':
+      return 'state-closed'
     default:
+      if (state.toLowerCase().includes('accept')) return 'state-pilot'
+      if (state.toLowerCase().includes('test')) return 'state-uat'
+      if (state.toLowerCase().includes('merge')) return 'state-closed'
+      if (state.toLowerCase().includes('review') || state.toLowerCase().includes('analysis')) return 'state-analysis'
+      if (state.toLowerCase().includes('develop') || state.toLowerCase().includes('code')) return 'state-development'
       return 'state-default'
   }
 }
@@ -237,8 +503,29 @@ function statusClass(state: string) {
     case 'Done':
       return 'closed'
     case 'Full Analysis':
+    case 'Requirement Review':
       return 'analysis'
+    case 'Development Backlog':
+    case 'Development':
+    case 'Code Review Backlog':
+    case 'Code Review':
+      return 'development'
+    case 'Test Backlog':
+    case 'Test':
+    case 'Test Review':
+      return 'uat'
+    case 'Acceptance':
+      return 'pilot'
+    case 'Merge-Backlog':
+    case 'Merge':
+    case 'Merged':
+      return 'closed'
     default:
+      if (state.toLowerCase().includes('accept')) return 'pilot'
+      if (state.toLowerCase().includes('test')) return 'uat'
+      if (state.toLowerCase().includes('merge')) return 'closed'
+      if (state.toLowerCase().includes('review') || state.toLowerCase().includes('analysis')) return 'analysis'
+      if (state.toLowerCase().includes('develop') || state.toLowerCase().includes('code')) return 'development'
       return 'default'
   }
 }
@@ -353,6 +640,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const [hiddenStates, setHiddenStates] = useState<string[]>([])
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [useUserStartDate, setUseUserStartDate] = useState(readUseUserStartDate)
+  const [requirementSortAxes, setRequirementSortAxes] = useState<RequirementSortAxes>(readRequirementSortAxes)
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const lastPanDaysRef = useRef(0)
   const [isPanning, setIsPanning] = useState(false)
@@ -379,6 +667,24 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   useEffect(() => {
     localStorage.setItem(USE_USER_START_DATE_KEY, useUserStartDate ? '1' : '0')
   }, [useUserStartDate])
+
+  useEffect(() => {
+    localStorage.setItem(REQUIREMENT_SORT_STATUS_KEY, requirementSortAxes.byStatus ? '1' : '0')
+    localStorage.setItem(REQUIREMENT_SORT_DATE_KEY, requirementSortAxes.byDate ? '1' : '0')
+    const legacyMode =
+      requirementSortAxes.byStatus && requirementSortAxes.byDate
+        ? 'both'
+        : requirementSortAxes.byDate
+          ? 'date'
+          : 'status'
+    localStorage.setItem(REQUIREMENT_SORT_KEY, legacyMode)
+  }, [requirementSortAxes])
+
+  const buildTaskRowsForGrid = useCallback(
+    (item: ChangeRequest, hidden: string[], expanded: Set<number>) =>
+      buildTaskRows(item, hidden, expanded, requirementSortAxes, useUserStartDate),
+    [requirementSortAxes, useUserStartDate],
+  )
 
   useEffect(() => {
     writeSelectedBoardIds(selectedBoardIds)
@@ -810,9 +1116,9 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
         </div>
         <div className="task-kind-row">
           <span className="task-kind-badge task-kind-req">Требование</span>
-          <div className={`task-column-pill ${stateColorClass(requirement.state)}`}>
+          <div className={`task-column-pill ${stateColorClass(requirementColumnLabel(requirement))}`}>
             <span className="task-column-pill-label">Колонка</span>
-            <span className="task-column-pill-value">{requirement.state}</span>
+            <span className="task-column-pill-value">{requirementColumnLabel(requirement)}</span>
           </div>
         </div>
         <p className="task-list-title-full selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
@@ -865,25 +1171,44 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     const requirement = row.requirement
     const parent = row.item
     const reqHref = workItemHref(requirement)
-      const reqStart = barStartDate(
-        requirement.startDate ?? parent.startDate,
-        parent.userStartDate,
-        useUserStartDate,
-      )
-      const reqEnd = requirement.targetDate ?? parent.targetDate
+    const barLayout = requirementTimelineBarLayout(
+      requirement,
+      parent,
+      fromDate,
+      toDate,
+      useUserStartDate,
+      requirementSortAxes,
+    )
     const isActive = selectedItemId === parent.id && selectedRequirementId === requirement.id
+    const columnLabel = requirementColumnLabel(requirement)
+    const barTitle =
+      barLayout.mode === 'combined'
+        ? `${columnLabel}${columnLabel !== requirement.state ? ` (статус: ${requirement.state})` : ''} · порядок по колонке, колбаска по датам\n${requirement.title}\n${requirementDatesLabel(requirement, parent)}`
+        : barLayout.mode === 'status'
+          ? `${columnLabel} · по колонке в сроке ЗНИ (New слева → Closed справа)\n${requirement.title}\n${requirementDatesLabel(requirement, parent)}`
+          : `${columnLabel} · колбаска по Start Date и плановой дате\n${requirement.title}\n${requirementDatesLabel(requirement, parent)}`
+    const useStairTrack = barLayout.mode === 'status'
+    const useCompactBar = barLayout.mode === 'status'
     return (
       <article className={`sync-row sync-row-req roadmap-row roadmap-row-req ${isActive ? 'active' : ''}`}>
         <div className="timeline-zoom-track">
-          <div className="row-track">
+          <div className={`row-track ${useStairTrack ? 'row-track-req-stair' : ''}`}>
+            {barLayout.span ? (
+              <div
+                className="zni-span-ghost"
+                style={{ left: `${barLayout.span.left}%`, width: `${barLayout.span.width}%` }}
+                aria-hidden
+                title={`Срок ЗНИ #${parent.id}`}
+              />
+            ) : null}
             <div
-              className={`bar bar-req ${statusClass(requirement.state)}`}
+              className={`bar bar-req ${useCompactBar ? 'bar-req-by-status' : ''} ${statusClass(requirementColumnLabel(requirement))}`}
               style={{
-                left: `${progressLeft(reqStart, fromDate, toDate)}%`,
-                width: `${progressWidth(reqStart, reqEnd, fromDate, toDate)}%`,
-                minWidth: '156px',
+                left: `${barLayout.left}%`,
+                width: `${barLayout.width}%`,
+                minWidth: useCompactBar ? '120px' : '156px',
               }}
-              title={`${requirement.state}\n${requirement.title}\n${requirementDatesLabel(requirement, parent)}`}
+              title={barTitle}
               onClick={(event) => {
                 if ((event.target as HTMLElement).closest('.selectable-text, .tfs-link')) return
                 focusTask(parent.id, requirement.id)
@@ -891,7 +1216,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
             >
               <div className="bar-text">
                 <span className="bar-kind-badge bar-kind-req">Требование</span>
-                <span className="bar-status">{requirement.state}</span>
+                <span className="bar-status">{requirementColumnLabel(requirement)}</span>
                 <span className="bar-label selectable-text" onClick={stopRowActivation} onPointerDown={stopRowActivation}>
                   <b>↳ #{requirement.id}</b> {requirement.title}
                 </span>
@@ -911,7 +1236,25 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
         <div className="timeline-head-actions">
           <button
             type="button"
-            className={`timeline-start-toggle ${useUserStartDate ? 'is-on' : ''}`}
+            className={`timeline-head-toggle ${requirementSortAxes.byStatus ? 'is-on' : ''}`}
+            aria-pressed={requirementSortAxes.byStatus}
+            title="По статусу: порядок строк (New → Closed) и смещение маркера в сроке ЗНИ. С «По дате» — ещё и колбаска от Start Date до плана."
+            onClick={() => setRequirementSortAxes((prev) => toggleRequirementSortAxis(prev, 'byStatus'))}
+          >
+            По статусу
+          </button>
+          <button
+            type="button"
+            className={`timeline-head-toggle ${requirementSortAxes.byDate ? 'is-on' : ''}`}
+            aria-pressed={requirementSortAxes.byDate}
+            title="По дате: колбаска на шкале от Start Date до плановой даты; порядок строк по дате старта. С «По статусу» — сначала статус, потом дата."
+            onClick={() => setRequirementSortAxes((prev) => toggleRequirementSortAxis(prev, 'byDate'))}
+          >
+            По дате
+          </button>
+          <button
+            type="button"
+            className={`timeline-head-toggle ${useUserStartDate ? 'is-on' : ''}`}
             aria-pressed={useUserStartDate}
             title="Показать только ЗНИ с заполненным Start Date в TFS (Microsoft.VSTS.Scheduling.StartDate). Старт колбаски — по этому полю."
             onClick={() => setUseUserStartDate((value) => !value)}
@@ -1101,7 +1444,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           renderTimelineCell={renderTimelineCell}
           loading={loading}
           visibleCount={boardFilteredItems.length}
-          buildTaskRows={buildTaskRows}
+          buildTaskRows={buildTaskRowsForGrid}
           sidebarHead={sidebarHead}
           timelineHead={timelineHead}
           emptyState={

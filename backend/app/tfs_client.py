@@ -606,6 +606,7 @@ class TfsClient:
             "System.ChangedBy",
             "System.AssignedTo",
             "System.TeamProject",
+            "System.BoardColumn",
             "Microsoft.VSTS.Common.ClosedDate",
         ]
         fields = wit_api_field_names(fields + settings.scheduling_batch_field_list)

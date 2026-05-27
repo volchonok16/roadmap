@@ -6,7 +6,7 @@ import httpx
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.board_mapping import board_for_area
+from app.board_mapping import BoardLike, board_for_area, board_snapshots_from_rows
 from app.config import settings
 from app.db import SessionLocal, close_db_session
 from app.json_utils import as_dict, as_relation_list, as_work_item_list
@@ -76,6 +76,16 @@ def relation_type(relation: dict[str, Any]) -> str:
     return str(as_dict(relation.get("attributes")).get("name") or "unknown")
 
 
+def work_item_kanban_column(fields: dict[str, Any] | None) -> str | None:
+    """Название колонки на Kanban-доске TFS (System.BoardColumn), не workflow State."""
+    if not fields:
+        return None
+    value = fields.get("System.BoardColumn")
+    if value in (None, ""):
+        return None
+    return str(value).strip()
+
+
 def merged_fields(item: dict[str, Any], compact_data: dict[str, Any] | None = None) -> dict[str, Any]:
     fields = dict(item.get("fields") or {})
     compact_fields = normalize_compact_fields((compact_data or {}).get("fields"))
@@ -89,7 +99,7 @@ def tfs_item_url(item_id: int, tfs_auth: TfsAuth) -> str:
 
 def item_payload(
     item: dict[str, Any],
-    boards: list[Board],
+    boards: list[BoardLike],
     tfs_auth: TfsAuth,
     parent_id: int | None = None,
     compact_data: dict[str, Any] | None = None,
@@ -466,9 +476,10 @@ async def run_sync(
     try:
         team_boards: list[dict[str, Any]] = []
         board_notes: list[str] = []
+        board_catalog: list[BoardLike] = []
         if period_mode:
             touch_sync_progress(db, sync_run, f"Обновление за период {date_from:%d.%m.%Y} — {date_to:%d.%m.%Y}…")
-            boards = db.query(Board).all()
+            board_catalog = board_snapshots_from_rows(db.query(Board).all())
         else:
             touch_sync_progress(db, sync_run, "Полная выгрузка: загрузка досок из TFS…")
             close_db_session(db)
@@ -483,7 +494,7 @@ async def run_sync(
                 {"notes": board_notes, "total_fetched": len(boards_payload), "items": team_boards},
             )
             db.commit()
-            boards = db.query(Board).all()
+            board_catalog = board_snapshots_from_rows(db.query(Board).all())
             close_db_session(db)
             db = None  # type: ignore[assignment]
 
@@ -533,7 +544,7 @@ async def run_sync(
         change_payloads: list[dict[str, Any]] = []
         for item in filtered_changes:
             compact_data = compact_by_id.get(item["id"])
-            payload = item_payload(item, boards, tfs_auth, compact_data=compact_data)
+            payload = item_payload(item, board_catalog, tfs_auth, compact_data=compact_data)
             upsert_work_item(db, payload)
             upsert_change_request(db, payload)
             for relation in as_relation_list(payload.get("relations")):
@@ -541,7 +552,8 @@ async def run_sync(
             change_payloads.append(payload)
         db.commit()
 
-        boards = db.query(Board).all()
+        if not board_catalog:
+            board_catalog = board_snapshots_from_rows(db.query(Board).all())
         parent_map = relation_parent_map(change_payloads)
         touch_sync_progress(db, sync_run, f"Загрузка связей ({len(parent_map)} элементов)…")
         close_db_session(db)
@@ -554,7 +566,7 @@ async def run_sync(
         saved_linked_items = 0
         for item in as_work_item_list(requirement_items):
             fields = item.get("fields") or {}
-            payload = item_payload(item, boards, tfs_auth, parent_id=parent_map.get(item["id"]))
+            payload = item_payload(item, board_catalog, tfs_auth, parent_id=parent_map.get(item["id"]))
             upsert_work_item(db, payload)
             saved_linked_items += 1
             if fields.get("System.WorkItemType") in settings.requirement_type_list:
@@ -563,7 +575,7 @@ async def run_sync(
         db.commit()
 
         sync_run.status = "success"
-        boards_count = len(team_boards) if team_boards else len(boards)
+        boards_count = len(team_boards) if team_boards else len(board_catalog)
         sync_run.boards_count = boards_count
         sync_run.change_requests_count = len(change_payloads)
         sync_run.requirements_count = saved_requirements

@@ -2,6 +2,8 @@ export type Requirement = {
   id: number
   title: string
   state: string
+  /** Колонка Kanban-доски TFS (System.BoardColumn), если отличается от workflow State. */
+  column?: string | null
   assignee?: string | null
   assigneeAvatarUrl?: string | null
   tfsUrl?: string | null
