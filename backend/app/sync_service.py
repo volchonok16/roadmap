@@ -12,6 +12,7 @@ from app.release_fields import work_item_release_label
 from app.config import settings
 from app.db import SessionLocal, close_db_session
 from app.json_utils import as_dict, as_relation_list, as_work_item_list
+from app.metrics_service import refresh_metrics_shipments
 from app.models import Board, ChangeRequest, RawTfsPayload, Requirement, SyncRun, WorkItem, WorkItemRelation
 from app.tfs_auth import TfsAuth
 from app.tfs_errors import friendly_http_error
@@ -652,6 +653,13 @@ async def run_sync(
         db.add(sync_run)
         db.commit()
         db.refresh(sync_run)
+        if sync_run.status == "success":
+            try:
+                refresh_metrics_shipments(db)
+            except Exception as metrics_exc:
+                sync_run.message = f"{sync_run.message} · витрина метрик: {metrics_exc}"
+                db.add(sync_run)
+                db.commit()
         close_db_session(db)
 
     return sync_run

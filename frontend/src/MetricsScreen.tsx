@@ -1,34 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { readInitialSelectedBoardIds } from './boardPreferences'
 import { apiFetch, clearSessionId, getJson } from './api'
-import MetricsBarChart, { formatReleaseAxisLabel } from './MetricsBarChart'
+import MetricsBarChart from './MetricsBarChart'
 import MetricsHistogram from './MetricsHistogram'
 import { readMetricsStreamBoardId, writeMetricsStreamBoardId } from './metricsBoard'
-import { filterItemsByBoard } from './metricsBoardFilter'
-import { buildShippedTasksByRelease, type MetricBarPoint } from './metricsCharts'
-import { countClosedRequirements, countStreams } from './metricsSummary'
+import {
+  buildHistogramFromShipments,
+  formatReleaseFromDashboard,
+  shipmentsForBoard,
+  type MetricsDashboard,
+} from './metricsDashboard'
 import { defaultMetricWidgets, type MetricWidgetId } from './metricsWidgets'
-import { normalizeRoadmapItems } from './linkedErrors'
-import type { ChangeRequest } from './roadmapTypes'
 import './App.css'
-
-type Board = {
-  id: string
-  name: string
-}
-
-type RoadmapResponse = {
-  boards: Board[]
-  items: ChangeRequest[]
-  generatedAt: string
-}
-
-type MetricsSummary = {
-  streams: number
-  closedRequirements: number
-  zniCount: number
-  requirementCount: number
-}
 
 type MetricsScreenProps = {
   onLogout: () => void
@@ -36,14 +19,10 @@ type MetricsScreenProps = {
 
 function metricsLoadRange() {
   const year = new Date().getFullYear()
-  return {
-    from: `${year - 2}-01-01`,
-    to: `${year + 2}-12-31`,
-    fromDate: new Date(year - 2, 0, 1),
-  }
+  return { from: `${year - 2}-01-01`, to: `${year + 2}-12-31` }
 }
 
-function readInitialMetricsBoardId(boards: Board[]) {
+function readInitialMetricsBoardId(boards: MetricsDashboard['boards']) {
   const saved = readMetricsStreamBoardId()
   if (saved && boards.some((board) => board.id === saved)) return saved
   const fromRoadmap = readInitialSelectedBoardIds().find((id) => boards.some((board) => board.id === id))
@@ -59,69 +38,47 @@ function formatMetricValue(value: number | null) {
 export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [boards, setBoards] = useState<Board[]>([])
-  const [allItems, setAllItems] = useState<ChangeRequest[]>([])
-  const [summary, setSummary] = useState<MetricsSummary | null>(null)
+  const [dashboard, setDashboard] = useState<MetricsDashboard | null>(null)
   const [streamBoardId, setStreamBoardId] = useState('')
-  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
   const range = useMemo(() => metricsLoadRange(), [])
 
-  const streamItems = useMemo(
-    () => filterItemsByBoard(allItems, streamBoardId || null),
-    [allItems, streamBoardId],
+  const streamShipments = useMemo(
+    () => shipmentsForBoard(dashboard?.shipments ?? [], streamBoardId || null),
+    [dashboard?.shipments, streamBoardId],
   )
 
   const releaseHistogram = useMemo(
     () =>
-      buildShippedTasksByRelease(streamItems, range.fromDate, {
+      buildHistogramFromShipments(streamShipments, dashboard?.releases ?? [], {
         maxBars: 16,
         includeEmptyBars: true,
       }),
-    [streamItems, range.fromDate],
+    [streamShipments, dashboard?.releases],
   )
 
   const releaseChartCompact = useMemo(
     () =>
-      buildShippedTasksByRelease(streamItems, range.fromDate, {
+      buildHistogramFromShipments(streamShipments, dashboard?.releases ?? [], {
         maxBars: 8,
         includeEmptyBars: false,
       }),
-    [streamItems, range.fromDate],
+    [streamShipments, dashboard?.releases],
   )
 
   const loadMetrics = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const boardRows = await getJson<Board[]>('/api/boards')
       const params = new URLSearchParams({ from: range.from, to: range.to })
-      const roadmap = await getJson<RoadmapResponse>(`/api/roadmap?${params}`)
-      const items = normalizeRoadmapItems(roadmap.items ?? [])
-      const mergedBoards = new Map(boardRows.map((board) => [board.id, board]))
-      for (const board of roadmap.boards ?? []) mergedBoards.set(board.id, board)
-      const boardList = Array.from(mergedBoards.values()).sort((left, right) =>
-        left.name.localeCompare(right.name, 'ru'),
-      )
-
-      setBoards(boardList)
-      setAllItems(items)
+      const data = await getJson<MetricsDashboard>(`/api/metrics/dashboard?${params}`)
+      setDashboard(data)
       setStreamBoardId((prev) => {
-        if (prev && boardList.some((board) => board.id === prev)) return prev
-        return readInitialMetricsBoardId(boardList)
+        if (prev && data.boards.some((board) => board.id === prev)) return prev
+        return readInitialMetricsBoardId(data.boards)
       })
-
-      const requirementCount = items.reduce((acc, item) => acc + item.requirements.length, 0)
-      setSummary({
-        streams: countStreams(boardList.length),
-        closedRequirements: countClosedRequirements(items),
-        zniCount: items.length,
-        requirementCount,
-      })
-      setGeneratedAt(roadmap.generatedAt ?? null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить метрики')
-      setSummary(null)
-      setAllItems([])
+      setDashboard(null)
     } finally {
       setLoading(false)
     }
@@ -147,15 +104,19 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   }
 
   const streamBoardName =
-    streamBoardId ? boards.find((board) => board.id === streamBoardId)?.name ?? 'Доска' : 'Все доски'
+    streamBoardId
+      ? dashboard?.boards.find((board) => board.id === streamBoardId)?.name ?? 'Доска'
+      : 'Все доски'
 
   const shippedTotal = releaseHistogram
     .filter((row) => row.label !== 'Closed без даты')
     .reduce((acc, row) => acc + row.value, 0)
 
   const widgetValues: Record<MetricWidgetId, number | null> = {
-    'streams-count': summary?.streams ?? null,
-    'closed-requirements': countClosedRequirements(streamItems),
+    'streams-count': dashboard?.totals.streams ?? null,
+    'closed-requirements': streamBoardId
+      ? shippedTotal
+      : dashboard?.totals.closedRequirements ?? null,
     'release-shipment': shippedTotal,
   }
 
@@ -165,12 +126,12 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
       <select
         className="metrics-stream-board-select filter-bar-input"
         value={streamBoardId}
-        disabled={loading || !boards.length}
+        disabled={loading || !dashboard?.boards.length}
         aria-label="Доска стрима для гистограммы"
         onChange={(event) => setStreamBoardId(event.target.value)}
       >
         <option value="">Все доски</option>
-        {boards.map((board) => (
+        {(dashboard?.boards ?? []).map((board) => (
           <option key={board.id} value={board.id}>
             {board.name}
           </option>
@@ -197,7 +158,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
             series={releaseChartCompact}
             loading={loading}
             emptyLabel="Нет отгрузки по выбранной доске"
-            formatLabel={formatReleaseAxisLabel}
+            formatLabel={formatReleaseFromDashboard}
             valueSuffix=" треб."
             variant="release"
           />
@@ -210,11 +171,14 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           {loading
             ? '…'
             : `${streamBoardName}: ${shippedTotal.toLocaleString('ru-RU')} отгружено по ${releaseHistogram.filter((r) => r.label !== 'Closed без даты').length} релизам`}
+          {dashboard?.cacheBuiltAt
+            ? ` · витрина ${new Date(dashboard.cacheBuiltAt).toLocaleString('ru-RU')}`
+            : ''}
         </p>
         <MetricsHistogram
           series={releaseHistogram}
           loading={loading}
-          emptyLabel="Нет закрытых требований с датой Closed для выбранной доски"
+          emptyLabel="Нет данных в витрине для выбранной доски"
           valueSuffix=" треб."
         />
       </div>
@@ -237,10 +201,10 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           </div>
         </div>
         <p className="metrics-header-note">
-          Сводка по данным TFS за период {range.from} — {range.to}
-          {generatedAt ? ` · обновлено ${new Date(generatedAt).toLocaleString('ru-RU')}` : ''}
-          {summary
-            ? ` · ${summary.zniCount} ЗНИ, ${summary.requirementCount} требований`
+          Быстрая витрина метрик за период {range.from} — {range.to}
+          {dashboard?.generatedAt ? ` · ответ ${new Date(dashboard.generatedAt).toLocaleTimeString('ru-RU')}` : ''}
+          {dashboard?.totals
+            ? ` · ${dashboard.totals.zniCount} ЗНИ в периоде`
             : ''}
         </p>
       </header>
@@ -269,7 +233,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           ))}
         </div>
         <p className="metrics-dashboard-foot">
-          В следующих версиях виджеты можно будет перетаскивать и менять размер.
+          Данные из витрины metrics_shipments (обновляется после «Выгрузить» / «Обновить» в TFS).
         </p>
       </section>
     </div>

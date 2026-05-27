@@ -99,6 +99,22 @@ class RawTfsPayload(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class MetricsShipment(Base):
+    """Витрина: отгруженные (Closed) требования по доске и релизу."""
+
+    __tablename__ = "metrics_shipments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    board_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    board_name: Mapped[str] = mapped_column(String(255), index=True)
+    release_label: Mapped[str] = mapped_column(String(128), index=True)
+    release_date: Mapped[date | None] = mapped_column(Date, index=True)
+    shipment_count: Mapped[int] = mapped_column(Integer, default=0)
+    period_from: Mapped[date] = mapped_column(Date, index=True)
+    period_to: Mapped[date] = mapped_column(Date, index=True)
+    built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class SyncRun(Base):
     __tablename__ = "sync_runs"
 

@@ -74,6 +74,37 @@ class RoadmapOut(ApiModel):
     generated_at: datetime
 
 
+class MetricsReleaseOut(ApiModel):
+    label: str
+    date: str | None = None
+
+
+class MetricsShipmentOut(ApiModel):
+    board_id: str | None = None
+    board_name: str
+    release_label: str
+    release_date: str | None = None
+    count: int
+
+
+class MetricsTotalsOut(ApiModel):
+    streams: int = 0
+    zni_count: int = 0
+    closed_requirements: int = 0
+    closed_without_date: int = 0
+
+
+class MetricsDashboardOut(ApiModel):
+    boards: list[BoardOut]
+    releases: list[MetricsReleaseOut]
+    shipments: list[MetricsShipmentOut]
+    totals: MetricsTotalsOut
+    period_from: date
+    period_to: date
+    generated_at: datetime
+    cache_built_at: datetime | None = None
+
+
 class TfsAuthIn(ApiModel):
     base_url: str | None = None
     project: str

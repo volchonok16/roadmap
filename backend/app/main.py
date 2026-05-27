@@ -27,6 +27,7 @@ from app.sync_service import (
     work_item_tags,
 )
 from app.db import Base, SessionLocal, engine, get_db
+from app.metrics_service import load_metrics_dashboard, refresh_metrics_shipments
 from app.models import Board, SyncRun, WorkItem
 from app.board_kanban import kanban_columns_from_board_raw
 from app.scheduling_push import push_scheduling_items
@@ -36,6 +37,7 @@ from app.schemas import (
     BoardOut,
     ChangeRequestOut,
     LinkedErrorOut,
+    MetricsDashboardOut,
     RequirementOut,
     RoadmapOut,
     SchedulingPushIn,
@@ -425,6 +427,19 @@ async def push_scheduling(
         first_error = next((row.error for row in out if row.error), "TFS update failed")
         raise HTTPException(status_code=502, detail=first_error)
     return SchedulingPushOut(results=out, success_count=success_count)
+
+
+@app.get("/api/metrics/dashboard", response_model=MetricsDashboardOut)
+def metrics_dashboard(
+    date_from: date = Query(alias="from"),
+    date_to: date = Query(alias="to"),
+    refresh: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> MetricsDashboardOut:
+    if refresh:
+        refresh_metrics_shipments(db, date_from=date_from, date_to=date_to)
+    payload = load_metrics_dashboard(db, date_from=date_from, date_to=date_to)
+    return MetricsDashboardOut.model_validate(payload)
 
 
 @app.get("/api/roadmap", response_model=RoadmapOut)
