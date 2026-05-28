@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     )
     tfs_fetch_board_columns: bool = Field(default=True, alias="TFS_FETCH_BOARD_COLUMNS")
     sync_button_cooldown_seconds: int = Field(default=30, alias="SYNC_BUTTON_COOLDOWN_SECONDS")
+    sync_stale_running_minutes: int = Field(default=180, alias="SYNC_STALE_RUNNING_MINUTES")
     app_public_url: str = Field(default="http://localhost:5173", alias="APP_PUBLIC_URL")
     api_public_url: str = Field(default="http://localhost:8000", alias="API_PUBLIC_URL")
     cors_allow_origins: str = Field(

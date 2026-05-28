@@ -19,8 +19,8 @@ function App() {
       setAuthenticated(status.authenticated)
       if (!status.authenticated) clearSessionId()
     } catch {
-      setAuthenticated(false)
-      clearSessionId()
+      // Keep the existing session on transient API/network errors.
+      setAuthenticated(true)
     }
   }, [])
 

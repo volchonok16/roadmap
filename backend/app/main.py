@@ -396,7 +396,7 @@ async def sync(
     db: Session = Depends(get_db),
     tfs_auth: TfsAuth = Depends(require_tfs_auth),
 ) -> SyncRunOut:
-    fail_stale_running_syncs(db, max_age_minutes=25)
+    fail_stale_running_syncs(db, max_age_minutes=settings.sync_stale_running_minutes)
     latest = db.query(SyncRun).order_by(SyncRun.started_at.desc()).first()
     if latest and latest.status == "running":
         return SyncRunOut.model_validate(latest)

@@ -22,15 +22,15 @@ function resolveApiBase(): string {
 const apiBase = resolveApiBase()
 
 export function getSessionId(): string | null {
-  return sessionStorage.getItem(SESSION_KEY)
+  return localStorage.getItem(SESSION_KEY)
 }
 
 export function setSessionId(sessionId: string) {
-  sessionStorage.setItem(SESSION_KEY, sessionId)
+  localStorage.setItem(SESSION_KEY, sessionId)
 }
 
 export function clearSessionId() {
-  sessionStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SESSION_KEY)
 }
 
 export function applySessionFromUrl() {

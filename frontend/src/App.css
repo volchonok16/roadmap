@@ -508,6 +508,48 @@ body.is-resizing-sidebar .sheet-resizer {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
 }
 
+.selected-date-line-sheet {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--selected-left, 50%);
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(248, 210, 72, 0.96) 0 8px,
+    rgba(248, 210, 72, 0) 8px 14px
+  );
+  box-shadow:
+    0 0 0 1px rgba(255, 252, 232, 0.75),
+    0 0 14px rgba(248, 210, 72, 0.45);
+  opacity: 0.9;
+  z-index: 7;
+}
+
+.selected-date-line-sheet::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(245, 190, 38, 0.95);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.95);
+}
+
+.selected-date-line-target {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(245, 186, 40, 0.9) 0 7px,
+    rgba(245, 186, 40, 0) 7px 13px
+  );
+  opacity: 0.8;
+}
+
 .timeline-zoom-track {
   position: relative;
   width: 100%;

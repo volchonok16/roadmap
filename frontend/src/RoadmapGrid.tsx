@@ -39,6 +39,9 @@ type RoadmapGridProps = {
   isTodayVisible: boolean
   todayLeft: number
   releaseMarkers: ReleaseTimelineMarker[]
+  selectedStartLeft: number | null
+  selectedTargetLeft: number | null
+  showGroupHeaders: boolean
 }
 
 export default function RoadmapGrid({
@@ -59,8 +62,12 @@ export default function RoadmapGrid({
   isTodayVisible,
   todayLeft,
   releaseMarkers,
+  selectedStartLeft,
+  selectedTargetLeft,
+  showGroupHeaders,
 }: RoadmapGridProps) {
-  const hasTimelineMarkers = isTodayVisible || releaseMarkers.length > 0
+  const hasSelectionMarkers = selectedStartLeft !== null || selectedTargetLeft !== null
+  const hasTimelineMarkers = isTodayVisible || releaseMarkers.length > 0 || hasSelectionMarkers
   return (
     <div className="roadmap-workspace">
       <div className="sync-sheet">
@@ -76,6 +83,20 @@ export default function RoadmapGrid({
             ))}
             {isTodayVisible && (
               <div className="today-line-sheet" style={{ '--today-left': `${todayLeft}%` } as CSSProperties} />
+            )}
+            {selectedStartLeft !== null && (
+              <div
+                className="selected-date-line-sheet selected-date-line-start"
+                style={{ '--selected-left': `${selectedStartLeft}%` } as CSSProperties}
+                title="Дата старта выбранного ЗНИ"
+              />
+            )}
+            {selectedTargetLeft !== null && (
+              <div
+                className="selected-date-line-sheet selected-date-line-target"
+                style={{ '--selected-left': `${selectedTargetLeft}%` } as CSSProperties}
+                title="Плановая дата выбранного ЗНИ"
+              />
             )}
           </div>
         )}
@@ -101,7 +122,7 @@ export default function RoadmapGrid({
 
         {groups.map((group) => (
           <section key={group.key} className="sync-group-section">
-            {groups.length > 1 && (
+            {showGroupHeaders && (
               <div className="sync-data-row sync-group-row sync-group-row-inline">
                 <div className="col-task">
                   <div className="sync-group-head sync-group-head-inline">

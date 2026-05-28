@@ -1044,6 +1044,20 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const today = startOfLocalDay()
   const todayLeft = progressLeft(today, fromDate, toDate)
   const isTodayVisible = today >= fromDate && today <= toDate
+  const selectedZniTimelineMarker = useMemo(() => {
+    if (!selectedItemId || !data?.items?.length) return null
+    const selected = data.items.find((item) => item.id === selectedItemId)
+    if (!selected) return null
+    const effective = effectiveScheduling(
+      selected,
+      schedulingOverrides[selected.id],
+      useUserStartDate,
+    )
+    return {
+      startLeft: progressLeft(effective.startDate, fromDate, toDate),
+      targetLeft: progressLeft(effective.targetDate, fromDate, toDate),
+    }
+  }, [selectedItemId, data?.items, schedulingOverrides, useUserStartDate, fromDate, toDate])
   const canPanTimeline =
     scale === 'quarter' || scale === 'month' || scale === 'week' || scale === 'custom'
   const totalItems = data?.items
@@ -2030,6 +2044,9 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           isTodayVisible={isTodayVisible}
           todayLeft={todayLeft}
           releaseMarkers={visibleReleaseMarkers}
+          selectedStartLeft={selectedZniTimelineMarker?.startLeft ?? null}
+          selectedTargetLeft={selectedZniTimelineMarker?.targetLeft ?? null}
+          showGroupHeaders={selectedBoardIds.length !== 1}
         />
       </section>
     </div>
