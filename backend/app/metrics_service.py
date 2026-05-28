@@ -5,13 +5,19 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import and_, delete, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.board_mapping import streams_board_display_name
 from app.config import settings
 from app.models import Board, MetricsShipment, WorkItem
+
 from app.release_fields import work_item_release_label
 from app.requirement_status import is_requirement_closed
+
+# Минимальные наборы колонок для метрик — не грузим тяжёлые JSONB.
+_CHANGE_LO = load_only(WorkItem.id, WorkItem.board_id, WorkItem.area_path, WorkItem.fields)
+_REQ_LO = load_only(WorkItem.id, WorkItem.parent_id, WorkItem.state, WorkItem.fields)
+_ERROR_LO = load_only(WorkItem.id, WorkItem.parent_id, WorkItem.state, WorkItem.fields)
 CHANGE_TYPE = "Запрос на изменение"
 REQUIREMENT_TYPE = "Требование"
 
@@ -129,25 +135,17 @@ def _collect_release_labels_from_db(
 ) -> list[tuple[str, date]]:
     parents = (
         db.query(WorkItem)
+        .options(_CHANGE_LO)
         .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
         .all()
     )
-    parent_ids = [
-        row[0]
-        for row in (
-            db.query(WorkItem.id)
-            .filter(
-                WorkItem.work_item_type == CHANGE_TYPE,
-                _parent_period_filter(period_from, period_to),
-            )
-            .all()
-        )
-    ]
+    parent_ids = [row.id for row in parents]
     parent_by_id = {row.id: row for row in parents}
     requirements: list[WorkItem] = []
     if parent_ids:
         requirements = (
             db.query(WorkItem)
+            .options(_REQ_LO)
             .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
             .all()
         )
@@ -179,6 +177,7 @@ def refresh_metrics_shipments(
 
     parents = (
         db.query(WorkItem)
+        .options(_CHANGE_LO)
         .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
         .all()
     )
@@ -189,6 +188,7 @@ def refresh_metrics_shipments(
     if parent_ids:
         requirements = (
             db.query(WorkItem)
+            .options(_REQ_LO)
             .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
             .all()
         )
@@ -237,6 +237,7 @@ def refresh_metrics_shipments(
     if error_parent_ids:
         errors = (
             db.query(WorkItem)
+            .options(_ERROR_LO)
             .filter(
                 WorkItem.work_item_type.in_(settings.error_type_list),
                 WorkItem.parent_id.in_(error_parent_ids),
@@ -322,34 +323,34 @@ def load_metrics_dashboard(
     )
 
     boards_rows = db.query(Board).order_by(Board.name).all()
+
+    # Используем только id — не грузим JSONB (24k ЗНИ × 20–100 KB = секунды ожидания).
     zni_count = (
-        db.query(WorkItem)
+        db.query(WorkItem.id)
         .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
         .count()
     )
-    parents = (
-        db.query(WorkItem)
+    parent_ids: list[int] = [
+        row[0]
+        for row in db.query(WorkItem.id)
         .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
         .all()
-    )
-    parent_ids = [row.id for row in parents]
-    requirement_ids: list[int] = []
+    ]
     requirements_count = 0
+    requirement_ids: list[int] = []
     if parent_ids:
         requirement_ids = [
             row[0]
-            for row in (
-                db.query(WorkItem.id)
-                .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
-                .all()
-            )
+            for row in db.query(WorkItem.id)
+            .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
+            .all()
         ]
         requirements_count = len(requirement_ids)
-    error_parent_ids = list(dict.fromkeys([*parent_ids, *requirement_ids]))
     errors_count = 0
+    error_parent_ids = list(dict.fromkeys([*parent_ids, *requirement_ids]))
     if error_parent_ids:
         errors_count = (
-            db.query(WorkItem)
+            db.query(WorkItem.id)
             .filter(
                 WorkItem.work_item_type.in_(settings.error_type_list),
                 WorkItem.parent_id.in_(error_parent_ids),
@@ -370,11 +371,16 @@ def load_metrics_dashboard(
         for row in facts
     ]
 
-    schedule = _collect_release_labels_from_db(db, period_from, period_to)
-    releases = [
-        {"label": label, "date": day.isoformat()}
-        for label, day in schedule
-    ]
+    # Релизы берём прямо из витрины (не перезапрашиваем WorkItem ещё раз).
+    seen_releases: set[str] = set()
+    releases: list[dict[str, Any]] = []
+    for row in sorted(facts, key=lambda r: (r.release_date or date.min, r.release_label)):
+        label = row.release_label
+        if label in ("Без релиза",) or label in seen_releases:
+            continue
+        if row.release_date:
+            seen_releases.add(label)
+            releases.append({"label": label, "date": row.release_date.isoformat()})
 
     closed_total = sum(
         row.shipment_count for row in facts if row.release_label not in ("Без релиза",)

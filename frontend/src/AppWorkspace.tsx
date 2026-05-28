@@ -11,9 +11,13 @@ type AppWorkspaceProps = {
 
 export default function AppWorkspace({ onLogout }: AppWorkspaceProps) {
   const [view, setView] = useState<AppView>(readAppView)
+  // Lazy mount: MetricsScreen монтируется только при первом переходе на вкладку.
+  // После этого остаётся в DOM (hidden), чтобы сохранить состояние.
+  const [metricsEverVisited, setMetricsEverVisited] = useState(() => readAppView() === 'metrics')
 
   useEffect(() => {
     writeAppView(view)
+    if (view === 'metrics') setMetricsEverVisited(true)
   }, [view])
 
   return (
@@ -23,7 +27,7 @@ export default function AppWorkspace({ onLogout }: AppWorkspaceProps) {
           <RoadmapScreen onLogout={onLogout} />
         </div>
         <div className="app-workspace-pane" hidden={view !== 'metrics'}>
-          <MetricsScreen onLogout={onLogout} />
+          {metricsEverVisited && <MetricsScreen onLogout={onLogout} />}
         </div>
       </div>
       <SheetTabs active={view} onChange={setView} />
