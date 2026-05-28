@@ -14,12 +14,12 @@ function localDate(iso: string) {
 }
 
 describe('isReleaseVisibleOnTimeline', () => {
-  it('hides past releases in current period', () => {
+  it('shows past releases inside current period', () => {
     const day = localDate('2026-05-01')
     const today = localDate('2026-05-26')
     const from = localDate('2026-04-01')
     const to = localDate('2026-07-01')
-    expect(isReleaseVisibleOnTimeline(day, today, from, to)).toBe(false)
+    expect(isReleaseVisibleOnTimeline(day, today, from, to)).toBe(true)
   })
 
   it('shows all releases inside a fully historical period', () => {

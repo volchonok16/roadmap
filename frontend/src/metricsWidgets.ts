@@ -44,6 +44,6 @@ export const defaultMetricWidgets: MetricWidgetLayout[] = [
     id: 'test-rework',
     kind: 'rework-chart',
     title: 'Возвраты требований в Develop',
-    hint: 'Текущие требования в колонке доработки, сгруппированные по доскам · выгрузка CSV',
+    hint: 'Переходы Test/UAT → Develop по истории TFS, сгруппированные по доскам · выгрузка CSV',
   },
 ]

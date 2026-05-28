@@ -28,6 +28,9 @@ export default function MetricsProgressChart({
 
   const maxTotal = Math.max(...sorted.map((p) => p.shipped + p.inProgress), 1)
   const labelFor = formatLabel ?? formatReleaseAxisLabel
+  const hasShipped = sorted.some((item) => item.shipped > 0)
+  const hasInProgress = sorted.some((item) => item.inProgress > 0)
+  const hasErrors = sorted.some((item) => item.errors > 0)
 
   return (
     <div
@@ -36,18 +39,24 @@ export default function MetricsProgressChart({
       aria-label="Прогресс по релизам"
     >
       <div className="metrics-bar-chart-legend">
-        <span className="metrics-bar-chart-legend-item is-green">
-          <span className="metrics-bar-chart-legend-dot" />
-          Закрыто требований
-        </span>
-        <span className="metrics-bar-chart-legend-item is-gray">
-          <span className="metrics-bar-chart-legend-dot" />
-          В работе
-        </span>
-        <span className="metrics-bar-chart-legend-item is-red">
-          <span className="metrics-bar-chart-legend-dot" />
-          Закрыто ошибок
-        </span>
+        {hasShipped ? (
+          <span className="metrics-bar-chart-legend-item is-green">
+            <span className="metrics-bar-chart-legend-dot" />
+            Закрыто требований
+          </span>
+        ) : null}
+        {hasInProgress ? (
+          <span className="metrics-bar-chart-legend-item is-gray">
+            <span className="metrics-bar-chart-legend-dot" />
+            В работе
+          </span>
+        ) : null}
+        {hasErrors ? (
+          <span className="metrics-bar-chart-legend-item is-red">
+            <span className="metrics-bar-chart-legend-dot" />
+            Закрыто ошибок
+          </span>
+        ) : null}
       </div>
 
       <div className="metrics-bar-chart-plot">

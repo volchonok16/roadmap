@@ -11,7 +11,7 @@ import {
 } from './metricsDashboardLayout'
 import type { MetricWidgetId } from './metricsWidgets'
 
-const RESIZE_HANDLES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const
+const RESIZE_HANDLES = ['s', 'e', 'se'] as const
 const EDIT_HINT_HEIGHT = 46
 const EDIT_EXTRA_ROWS = 8
 
@@ -114,7 +114,7 @@ export default function MetricsDashboardGrid({
     >
       {editMode ? (
         <p className="metrics-dashboard-grid-hint">
-          Сетка на всю панель: тяните за шапку, размер — за края и углы. Раскладка сохраняется в вашей учётной
+          Сетка на всю панель: тяните за шапку, размер — за правый/нижний край или угол. Раскладка сохраняется в вашей учётной
           записи TFS.{' '}
           <button type="button" className="metrics-dashboard-grid-reset" onClick={resetLayout}>
             Сбросить

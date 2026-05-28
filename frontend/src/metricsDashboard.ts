@@ -26,6 +26,8 @@ export type MetricsAnalysisStay = {
   itemId: number
   title: string
   state: string
+  fromColumn: string
+  toColumn: string
   column: string
   areaPath: string | null
   changedAt: string | null

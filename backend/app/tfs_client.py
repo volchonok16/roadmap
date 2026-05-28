@@ -912,6 +912,23 @@ class TfsClient:
                     continue
         return sorted(ids)
 
+    async def get_work_item_updates(self, item_id: int) -> dict[str, Any]:
+        last_response: httpx.Response | None = None
+        for api_version in _api_version_candidates():
+            response = await self.client.get(
+                f"/{self.project}/_apis/wit/workItems/{item_id}/updates",
+                params={"api-version": api_version},
+            )
+            last_response = response
+            if response.status_code == 200:
+                payload = response.json()
+                return payload if isinstance(payload, dict) else {}
+            if response.status_code == 400 and "out of range" in response.text.lower():
+                continue
+        if last_response is not None:
+            last_response.raise_for_status()
+        raise httpx.HTTPError(f"Updates request failed without response for work item {item_id}")
+
     async def patch_work_item(self, item_id: int, patch_ops: list[dict[str, Any]]) -> dict[str, Any]:
         path = f"/{self.project}/_apis/wit/workitems/{item_id}"
         headers = {"Content-Type": "application/json-patch+json"}

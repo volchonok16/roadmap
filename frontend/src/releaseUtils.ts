@@ -31,19 +31,16 @@ function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate())
 }
 
-/** Релиз попадает на шкалу: в пределах периода; не «прошлый» относительно сегодня, если период ещё актуален. */
+/** Релиз попадает на шкалу, если дата релиза находится внутри выбранного периода. */
 export function isReleaseVisibleOnTimeline(
   day: Date,
-  today: Date,
+  _today: Date,
   periodStart: Date,
   periodEnd: Date,
 ) {
   const dayStart = startOfDay(day)
-  const todayStart = startOfDay(today)
   if (dayStart < periodStart || dayStart > periodEnd) return false
-  // Прошлый квартал/месяц: показываем все релизы внутри выбранного периода.
-  if (todayStart > periodEnd) return true
-  return dayStart >= todayStart
+  return true
 }
 
 /** Релизы ЗНИ и требований в выбранном периоде (уникальные даты). */

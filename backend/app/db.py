@@ -35,6 +35,16 @@ _PERF_INDEXES = [
         "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_work_items_type_parent "
         "ON work_items (work_item_type, parent_id)",
     ),
+    (
+        "ix_work_item_column_transitions_work_item",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_work_item_column_transitions_work_item "
+        "ON work_item_column_transitions (work_item_id)",
+    ),
+    (
+        "ix_work_item_column_transitions_changed_at",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_work_item_column_transitions_changed_at "
+        "ON work_item_column_transitions (changed_at)",
+    ),
 ]
 
 # Новые колонки, добавленные после первоначального создания таблиц.

@@ -4,15 +4,21 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any
 
+import asyncio
+
 from sqlalchemy import and_, delete, or_
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, load_only
 
 from app.board_mapping import streams_board_display_name
 from app.config import settings
-from app.models import Board, MetricsShipment, WorkItem
+from app.json_utils import as_dict, as_list
+from app.models import Board, MetricsShipment, WorkItem, WorkItemColumnTransition
 
 from app.release_fields import work_item_release_label
 from app.requirement_status import is_requirement_closed
+from app.tfs_auth import TfsAuth
+from app.tfs_client import TfsClient, parse_tfs_datetime
 
 # Минимальные наборы колонок для метрик — не грузим тяжёлые JSONB.
 _CHANGE_LO = load_only(WorkItem.id, WorkItem.board_id, WorkItem.area_path, WorkItem.fields)
@@ -22,14 +28,6 @@ _ANALYSIS_CHANGE_LO = load_only(
     WorkItem.title,
     WorkItem.state,
     WorkItem.area_path,
-    WorkItem.changed_date,
-    WorkItem.fields,
-)
-_REWORK_REQ_LO = load_only(
-    WorkItem.id,
-    WorkItem.parent_id,
-    WorkItem.title,
-    WorkItem.state,
     WorkItem.changed_date,
     WorkItem.fields,
 )
@@ -63,6 +61,13 @@ def _is_development_column(column: str | None) -> bool:
     return "develop" in lower or "development" in lower or "разработ" in lower
 
 
+def _is_testing_column(column: str | None) -> bool:
+    if not column:
+        return False
+    lower = column.strip().lower()
+    return "test" in lower or "testing" in lower or "uat" in lower or "тест" in lower
+
+
 def parse_release_date_from_label(label: str) -> date | None:
     parts = label.split(".")
     if len(parts) < 3:
@@ -91,6 +96,18 @@ def _parent_period_filter(date_from: date, date_to: date):
             and_(WorkItem.start_date <= date_from, WorkItem.target_date >= date_to),
         ),
     )
+
+
+def _apply_board_scope(query, board_ids: list[str] | None):
+    if not board_ids:
+        return query
+    clauses = []
+    for board_id in board_ids:
+        if board_id.startswith("area:"):
+            clauses.append(WorkItem.area_path == board_id.removeprefix("area:").replace("/", "\\"))
+        else:
+            clauses.append(WorkItem.board_id == board_id)
+    return query.filter(clauses[0] if len(clauses) == 1 else or_(*clauses))
 
 
 def _board_key(board_id: str | None, area_path: str | None) -> str | None:
@@ -332,6 +349,142 @@ def refresh_metrics_shipments(
     return built_at
 
 
+def _transition_rows_from_updates(
+    updates: dict[str, Any],
+    *,
+    requirement: WorkItem,
+    parent: WorkItem | None,
+    board_by_id: dict[str, Board],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    area_path = parent.area_path if parent else None
+    board_id = _board_key(parent.board_id if parent else None, area_path)
+    board_name = _board_display_name(parent.board_id if parent else None, area_path, board_by_id)
+    for update in as_list(updates.get("value")):
+        if not isinstance(update, dict):
+            continue
+        field = as_dict(as_dict(update.get("fields")).get("System.BoardColumn"))
+        old_value = field.get("oldValue")
+        new_value = field.get("newValue")
+        if old_value in (None, "") or new_value in (None, ""):
+            continue
+        from_column = str(old_value).strip()
+        to_column = str(new_value).strip()
+        if not (_is_testing_column(from_column) and _is_development_column(to_column)):
+            continue
+        result.append(
+            {
+                "work_item_id": requirement.id,
+                "parent_id": requirement.parent_id,
+                "board_id": board_id,
+                "board_name": board_name,
+                "title": requirement.title,
+                "state": requirement.state,
+                "area_path": area_path,
+                "rev": update.get("rev"),
+                "from_column": from_column,
+                "to_column": to_column,
+                "changed_at": parse_tfs_datetime(update.get("revisedDate") or update.get("changedDate")),
+                "raw": update,
+            }
+        )
+    return result
+
+
+def upsert_work_item_column_transition(db: Session, payload: dict[str, Any]) -> None:
+    statement = insert(WorkItemColumnTransition).values(**payload)
+    statement = statement.on_conflict_do_update(
+        constraint="uq_work_item_column_transition",
+        set_={
+            "parent_id": statement.excluded.parent_id,
+            "board_id": statement.excluded.board_id,
+            "board_name": statement.excluded.board_name,
+            "title": statement.excluded.title,
+            "state": statement.excluded.state,
+            "area_path": statement.excluded.area_path,
+            "changed_at": statement.excluded.changed_at,
+            "raw": statement.excluded.raw,
+            "updated_at": datetime.now(UTC),
+        },
+    )
+    db.execute(statement)
+
+
+async def refresh_requirement_rework_transitions(
+    db: Session,
+    tfs_auth: TfsAuth,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    board_ids: list[str] | None = None,
+) -> int:
+    period_from, period_to = date_from or metrics_default_period()[0], date_to or metrics_default_period()[1]
+    boards_rows = db.query(Board).order_by(Board.name).all()
+    board_by_id = {row.id: row for row in boards_rows}
+    parent_query = db.query(WorkItem).options(_CHANGE_LO).filter(
+        WorkItem.work_item_type == CHANGE_TYPE,
+        _parent_period_filter(period_from, period_to),
+    )
+    parent_query = _apply_board_scope(parent_query, board_ids)
+    parents = parent_query.all()
+    parent_ids = [row.id for row in parents]
+    parent_by_id = {row.id: row for row in parents}
+    requirements: list[WorkItem] = []
+    if parent_ids:
+        requirements = (
+            db.query(WorkItem)
+            .options(
+                load_only(
+                    WorkItem.id,
+                    WorkItem.parent_id,
+                    WorkItem.title,
+                    WorkItem.state,
+                    WorkItem.changed_date,
+                    WorkItem.fields,
+                )
+            )
+            .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
+            .all()
+        )
+    if not requirements:
+        return 0
+
+    client = TfsClient(tfs_auth)
+    semaphore = asyncio.Semaphore(6)
+    saved = 0
+    try:
+        async def fetch_one(requirement: WorkItem) -> tuple[int, list[dict[str, Any]]]:
+            async with semaphore:
+                try:
+                    updates = await client.get_work_item_updates(requirement.id)
+                except Exception:
+                    return requirement.id, []
+                parent = parent_by_id.get(requirement.parent_id) if requirement.parent_id else None
+                rows = _transition_rows_from_updates(
+                    updates,
+                    requirement=requirement,
+                    parent=parent,
+                    board_by_id=board_by_id,
+                )
+                await asyncio.sleep(settings.tfs_request_delay_seconds)
+                return requirement.id, rows
+
+        batch_size = 200
+        for offset in range(0, len(requirements), batch_size):
+            chunk = requirements[offset : offset + batch_size]
+            for item_id, rows in await asyncio.gather(*(fetch_one(req) for req in chunk)):
+                db.query(WorkItemColumnTransition).filter(
+                    WorkItemColumnTransition.work_item_id == item_id,
+                ).delete(synchronize_session=False)
+                for row in rows:
+                    upsert_work_item_column_transition(db, row)
+                    saved += 1
+            db.commit()
+    finally:
+        await client.close()
+    return saved
+
+
 def load_metrics_dashboard(
     db: Session,
     *,
@@ -458,41 +611,30 @@ def load_metrics_dashboard(
     analysis_by_board.sort(key=lambda row: (row["avg_days"], row["count"]), reverse=True)
     analysis_stays.sort(key=lambda row: (row["days_in_analysis"], row["board_name"]), reverse=True)
 
-    parent_context = {row.id: row for row in analysis_rows}
-    requirement_rework_rows: list[WorkItem] = []
-    if parent_ids:
-        requirement_rework_rows = (
-            db.query(WorkItem)
-            .options(_REWORK_REQ_LO)
-            .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
-            .all()
-        )
+    transition_rows = (
+        db.query(WorkItemColumnTransition)
+        .filter(WorkItemColumnTransition.parent_id.in_(parent_ids or [-1]))
+        .order_by(WorkItemColumnTransition.changed_at.desc(), WorkItemColumnTransition.work_item_id)
+        .all()
+    )
     requirement_reworks: list[dict[str, Any]] = []
     requirement_rework_groups: dict[tuple[str | None, str], int] = {}
-    for req in requirement_rework_rows:
-        column = _kanban_column(req.fields)
-        if not _is_development_column(column):
-            continue
-        parent = parent_context.get(req.parent_id) if req.parent_id else None
-        area_path = parent.area_path if parent else None
-        board_id = _board_key(parent.board_id if parent else None, area_path)
-        board_name = _board_display_name(parent.board_id if parent else None, area_path, board_by_id)
-        key = (board_id, board_name)
+    for row in transition_rows:
+        key = (row.board_id, row.board_name)
         requirement_rework_groups[key] = requirement_rework_groups.get(key, 0) + 1
-        changed_at = req.changed_date
-        if changed_at and changed_at.tzinfo is None:
-            changed_at = changed_at.replace(tzinfo=UTC)
         requirement_reworks.append(
             {
-                "board_id": board_id,
-                "board_name": board_name,
-                "item_id": req.id,
-                "parent_id": req.parent_id,
-                "title": req.title,
-                "state": req.state,
-                "column": column or "Development",
-                "area_path": area_path,
-                "changed_at": changed_at,
+                "board_id": row.board_id,
+                "board_name": row.board_name,
+                "item_id": row.work_item_id,
+                "parent_id": row.parent_id,
+                "title": row.title,
+                "state": row.state,
+                "from_column": row.from_column,
+                "to_column": row.to_column,
+                "column": row.to_column,
+                "area_path": row.area_path,
+                "changed_at": row.changed_at,
             }
         )
     requirement_reworks_by_board = [

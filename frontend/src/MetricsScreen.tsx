@@ -132,7 +132,17 @@ function downloadAnalysisCsv(rows: MetricsAnalysisStay[]) {
 }
 
 function downloadReworkCsv(rows: MetricsRequirementRework[]) {
-  const header = ['board', 'requirement_id', 'parent_zni_id', 'title', 'state', 'column', 'changed_at', 'area_path']
+  const header = [
+    'board',
+    'requirement_id',
+    'parent_zni_id',
+    'title',
+    'state',
+    'from_column',
+    'to_column',
+    'changed_at',
+    'area_path',
+  ]
   const lines = [
     header.map(csvCell).join(';'),
     ...rows.map((row) =>
@@ -142,7 +152,8 @@ function downloadReworkCsv(rows: MetricsRequirementRework[]) {
         row.parentId,
         row.title,
         row.state,
-        row.column,
+        row.fromColumn,
+        row.toColumn,
         row.changedAt,
         row.areaPath,
       ]
@@ -178,6 +189,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const [analysisDateTo, setAnalysisDateTo] = useState('')
   const [reworkDateFrom, setReworkDateFrom] = useState('')
   const [reworkDateTo, setReworkDateTo] = useState('')
+  const [refreshingRework, setRefreshingRework] = useState(false)
   const [releaseChartType, setReleaseChartType] = useState<MetricsChartType>(() =>
     readMetricsChartType('release-shipment'),
   )
@@ -279,6 +291,23 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     }
   }, [range.from, range.to])
 
+  const refreshReworkTransitions = useCallback(async () => {
+    setRefreshingRework(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ from: range.from, to: range.to })
+      if (streamBoardId) params.append('board_id', streamBoardId)
+      const response = await apiFetch(`/api/metrics/rework-transitions/refresh?${params}`, { method: 'POST' })
+      if (!response.ok) throw new Error(await response.text())
+      const data = (await response.json()) as MetricsDashboard
+      setDashboard(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось пересчитать возвраты в Develop')
+    } finally {
+      setRefreshingRework(false)
+    }
+  }, [range.from, range.to, streamBoardId])
+
   useEffect(() => {
     void loadMetrics()
   }, [loadMetrics])
@@ -371,9 +400,18 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     streamBoardId ? boards.find((board) => board.id === streamBoardId)?.name ?? 'Доска' : 'Все доски'
 
   const shippedTotal = shippedTotalFromHistogram
-  const activeRequirementsCount = dashboard?.totals.activeRequirementsCount ?? 0
-  const activeErrorsCount = dashboard?.totals.activeErrorsCount ?? 0
-  const activeTotalCount = dashboard?.totals.activeTotalCount ?? activeRequirementsCount + activeErrorsCount
+  const releaseProgressTotals = useMemo(
+    () =>
+      releaseProgressPoints.reduce(
+        (acc, point) => ({
+          shipped: acc.shipped + point.shipped,
+          inProgress: acc.inProgress + point.inProgress,
+          errors: acc.errors + point.errors,
+        }),
+        { shipped: 0, inProgress: 0, errors: 0 },
+      ),
+    [releaseProgressPoints],
+  )
 
   const widgetValues: Record<MetricWidgetId, number | null> = {
     'streams-count': dashboard?.totals.streams ?? null,
@@ -409,14 +447,14 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
               : `${streamBoardName}: ${releaseProgressPoints.length} релизов в работе`}
           </p>
           <div className="metrics-totals-row metrics-widget-no-drag">
-            <span className="metrics-total-chip metrics-total-chip-green" title="Активные задачи (без Closed)">
-              Активных задач: {loading ? '…' : activeTotalCount.toLocaleString('ru-RU')}
+            <span className="metrics-total-chip metrics-total-chip-green" title="Требования в работе по выбранной доске и релизам графика">
+              В работе: {loading ? '…' : releaseProgressTotals.inProgress.toLocaleString('ru-RU')}
             </span>
-            <span className="metrics-total-chip metrics-total-chip-blue" title="Активные требования (без Closed)">
-              Требований: {loading ? '…' : activeRequirementsCount.toLocaleString('ru-RU')}
+            <span className="metrics-total-chip metrics-total-chip-blue" title="Закрытые требования по выбранной доске и релизам графика">
+              Закрыто треб.: {loading ? '…' : releaseProgressTotals.shipped.toLocaleString('ru-RU')}
             </span>
-            <span className="metrics-total-chip metrics-total-chip-red" title="Активные ошибки (без Closed)">
-              Ошибок: {loading ? '…' : activeErrorsCount.toLocaleString('ru-RU')}
+            <span className="metrics-total-chip metrics-total-chip-red" title="Закрытые ошибки по выбранной доске и релизам графика">
+              Ошибок: {loading ? '…' : releaseProgressTotals.errors.toLocaleString('ru-RU')}
             </span>
           </div>
           <MetricsProgressChart
@@ -503,7 +541,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
           <p className="metrics-widget-chart-summary metrics-widget-no-drag">
             {loading
               ? '…'
-              : `${streamBoardName}: ${filteredReworkRows.length.toLocaleString('ru-RU')} требований сейчас в Develop`}
+              : `${streamBoardName}: ${filteredReworkRows.length.toLocaleString('ru-RU')} возвратов из тестирования в Develop`}
           </p>
           <div className="metrics-widget-actions metrics-widget-no-drag">
             <label className="metrics-date-filter">
@@ -538,8 +576,17 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
             ) : null}
             <button
               type="button"
+              className="metrics-widget-export metrics-widget-export-secondary"
+              disabled={loading || refreshingRework}
+              onClick={() => void refreshReworkTransitions()}
+              title="Загрузить историю TFS по требованиям и пересчитать переходы Test/UAT → Develop"
+            >
+              {refreshingRework ? 'Считаю…' : 'Пересчитать возвраты'}
+            </button>
+            <button
+              type="button"
               className="metrics-widget-export"
-              disabled={loading || filteredReworkRows.length === 0}
+              disabled={loading || refreshingRework || filteredReworkRows.length === 0}
               onClick={() => downloadReworkCsv(filteredReworkRows)}
             >
               Выгрузить CSV
@@ -550,8 +597,8 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
             loading={loading}
             emptyLabel={
               streamBoardId
-                ? 'На этой доске нет требований в Develop'
-                : 'Нет требований в Develop'
+                ? 'На этой доске нет зафиксированных возвратов в Develop'
+                : 'Нет зафиксированных возвратов в Develop'
             }
           />
         </div>

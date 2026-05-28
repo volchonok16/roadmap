@@ -116,6 +116,8 @@ class MetricsRequirementReworkOut(ApiModel):
     parent_id: int | None = None
     title: str
     state: str
+    from_column: str
+    to_column: str
     column: str
     area_path: str | None = None
     changed_at: datetime | None = None

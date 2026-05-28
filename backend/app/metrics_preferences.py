@@ -10,8 +10,8 @@ DEFAULT_LAYOUT: list[dict[str, Any]] = [
     {"i": "streams-count", "x": 0, "y": 0, "w": 3, "h": 3, "minW": 2, "minH": 2, "maxW": 4, "maxH": 8},
     {"i": "release-shipment", "x": 3, "y": 0, "w": 9, "h": 9, "minW": 4, "minH": 4, "maxW": 12, "maxH": 24},
     {"i": "release-progress", "x": 0, "y": 9, "w": 12, "h": 9, "minW": 4, "minH": 4, "maxW": 12, "maxH": 24},
-    {"i": "analysis-stay", "x": 0, "y": 18, "w": 12, "h": 8, "minW": 4, "minH": 4, "maxW": 12, "maxH": 24},
-    {"i": "test-rework", "x": 0, "y": 26, "w": 12, "h": 8, "minW": 4, "minH": 4, "maxW": 12, "maxH": 24},
+    {"i": "analysis-stay", "x": 0, "y": 18, "w": 12, "h": 8, "minW": 2, "minH": 3, "maxW": 12, "maxH": 24},
+    {"i": "test-rework", "x": 0, "y": 26, "w": 12, "h": 8, "minW": 2, "minH": 3, "maxW": 12, "maxH": 24},
 ]
 DEFAULT_CHART_TYPES = {"release-shipment": "line"}
 

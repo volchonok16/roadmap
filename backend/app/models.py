@@ -125,6 +125,38 @@ class MetricsShipment(Base):
     built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class WorkItemColumnTransition(Base):
+    """История переходов Kanban-колонки для метрик возврата в доработку."""
+
+    __tablename__ = "work_item_column_transitions"
+    __table_args__ = (
+        UniqueConstraint(
+            "work_item_id",
+            "rev",
+            "from_column",
+            "to_column",
+            name="uq_work_item_column_transition",
+        ),
+        Index("ix_work_item_column_transitions_work_item", "work_item_id"),
+        Index("ix_work_item_column_transitions_changed_at", "changed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    work_item_id: Mapped[int] = mapped_column(Integer, ForeignKey("work_items.id", ondelete="CASCADE"), index=True)
+    parent_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    board_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    board_name: Mapped[str] = mapped_column(String(255), index=True)
+    title: Mapped[str] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(String(128), index=True)
+    area_path: Mapped[str | None] = mapped_column(String(512), index=True)
+    rev: Mapped[int | None] = mapped_column(Integer)
+    from_column: Mapped[str] = mapped_column(String(255), index=True)
+    to_column: Mapped[str] = mapped_column(String(255), index=True)
+    changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    raw: Mapped[dict] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class UserPreference(Base):
     __tablename__ = "user_preferences"
     __table_args__ = (UniqueConstraint("account_key", "preference_key", name="uq_user_preference"),)

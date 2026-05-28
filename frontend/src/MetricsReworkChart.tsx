@@ -9,7 +9,7 @@ type Props = {
 export default function MetricsReworkChart({
   rows,
   loading = false,
-  emptyLabel = 'Нет требований в Develop',
+  emptyLabel = 'Нет возвратов в Develop',
 }: Props) {
   if (loading) {
     return <div className="metrics-bar-chart metrics-bar-chart-loading">Загрузка…</div>
@@ -27,7 +27,7 @@ export default function MetricsReworkChart({
       <div className="metrics-bar-chart-legend">
         <span className="metrics-bar-chart-legend-item is-purple">
           <span className="metrics-bar-chart-legend-dot" />
-          Требования сейчас в Develop
+          Возвраты из тестирования в Develop
         </span>
       </div>
 
@@ -39,7 +39,7 @@ export default function MetricsReworkChart({
               <div
                 className="metrics-bar-chart-bar is-purple"
                 style={{ height: `${heightPct}%` }}
-                title={`${item.boardName}\nТребований в Develop: ${item.count}`}
+                title={`${item.boardName}\nВозвратов в Develop: ${item.count}`}
               >
                 <span className="metrics-bar-chart-bar-value">{item.count}</span>
               </div>

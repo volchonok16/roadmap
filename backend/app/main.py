@@ -31,7 +31,11 @@ from app.sync_service import (
 )
 from app.db import Base, SessionLocal, engine, ensure_perf_indexes, get_db
 from app.metrics_preferences import default_metrics_ui_preferences, normalize_metrics_ui_preferences
-from app.metrics_service import load_metrics_dashboard, refresh_metrics_shipments
+from app.metrics_service import (
+    load_metrics_dashboard,
+    refresh_metrics_shipments,
+    refresh_requirement_rework_transitions,
+)
 from app.user_preferences_service import (
     METRICS_UI_PREFERENCE_KEY,
     read_user_preference,
@@ -539,6 +543,25 @@ async def metrics_dashboard(
 ) -> MetricsDashboardOut:
     if refresh:
         asyncio.create_task(run_metrics_refresh_background(date_from=date_from, date_to=date_to))
+    payload = load_metrics_dashboard(db, date_from=date_from, date_to=date_to)
+    return MetricsDashboardOut.model_validate(payload)
+
+
+@app.post("/api/metrics/rework-transitions/refresh", response_model=MetricsDashboardOut)
+async def metrics_rework_transitions_refresh(
+    date_from: date = Query(alias="from"),
+    date_to: date = Query(alias="to"),
+    board_id: list[str] = Query(default=[]),
+    auth: TfsAuth = Depends(require_tfs_auth),
+    db: Session = Depends(get_db),
+) -> MetricsDashboardOut:
+    await refresh_requirement_rework_transitions(
+        db,
+        auth,
+        date_from=date_from,
+        date_to=date_to,
+        board_ids=board_id or None,
+    )
     payload = load_metrics_dashboard(db, date_from=date_from, date_to=date_to)
     return MetricsDashboardOut.model_validate(payload)
 

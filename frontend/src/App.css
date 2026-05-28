@@ -3585,6 +3585,11 @@ h2 {
   overflow: auto;
 }
 
+.metrics-dashboard-grid.is-editing .metrics-dashboard-grid-canvas {
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .metrics-dashboard-grid.is-view .react-resizable-handle {
   display: none;
 }
@@ -3657,6 +3662,15 @@ h2 {
 .metrics-dashboard-grid.is-editing .metrics-widget {
   border-color: rgba(91, 154, 234, 0.4);
   box-shadow: 0 2px 10px rgba(32, 47, 74, 0.08);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.metrics-dashboard-grid.is-editing .react-grid-item:hover .metrics-widget {
+  border-color: rgba(91, 154, 234, 0.68);
+  box-shadow: 0 8px 24px rgba(32, 47, 74, 0.12);
 }
 
 .metrics-dashboard-grid.is-editing .react-grid-item:hover {
@@ -3671,6 +3685,7 @@ h2 {
   box-shadow: 0 12px 32px rgba(32, 47, 74, 0.16);
   border-color: rgba(91, 154, 234, 0.6);
   opacity: 0.97;
+  transform: scale(1.006);
 }
 
 .metrics-dashboard-grid.is-editing .metrics-widget-drag-handle {
@@ -4050,105 +4065,64 @@ h2 {
   background-image: none;
   padding: 0;
   margin: 0;
-  opacity: 0;
+  opacity: 0.38;
   transition: opacity 0.12s ease;
   z-index: 6;
 }
 
 .metrics-dashboard-grid.is-editing .react-grid-item:hover .react-resizable-handle,
-.metrics-dashboard-grid.is-editing .react-grid-item.resizing .react-resizable-handle {
+.metrics-dashboard-grid.is-editing .react-grid-item.resizing .react-resizable-handle,
+.metrics-dashboard-grid.is-editing .react-grid-item.react-resizable-resizing .react-resizable-handle {
   opacity: 1;
 }
 
-.metrics-dashboard-grid.is-editing .react-resizable-handle-se,
-.metrics-dashboard-grid.is-editing .react-resizable-handle-sw,
-.metrics-dashboard-grid.is-editing .react-resizable-handle-ne,
-.metrics-dashboard-grid.is-editing .react-resizable-handle-nw {
-  width: 14px;
-  height: 14px;
+.metrics-dashboard-grid.is-editing .react-resizable-handle-se {
+  width: 18px;
+  height: 18px;
   transform: none;
 }
 
 .metrics-dashboard-grid.is-editing .react-resizable-handle-se {
-  right: 2px;
-  bottom: 2px;
+  right: 4px;
+  bottom: 4px;
   cursor: se-resize;
-  border-right: 3px solid #5b9aea;
-  border-bottom: 3px solid #5b9aea;
+  border-right: 4px solid #5b9aea;
+  border-bottom: 4px solid #5b9aea;
+  border-radius: 0 0 7px 0;
 }
 
-.metrics-dashboard-grid.is-editing .react-resizable-handle-sw {
-  left: 2px;
-  bottom: 2px;
-  cursor: sw-resize;
-  border-left: 3px solid #5b9aea;
-  border-bottom: 3px solid #5b9aea;
-}
-
-.metrics-dashboard-grid.is-editing .react-resizable-handle-ne {
-  right: 2px;
-  top: 2px;
-  cursor: ne-resize;
-  border-right: 3px solid #5b9aea;
-  border-top: 3px solid #5b9aea;
-}
-
-.metrics-dashboard-grid.is-editing .react-resizable-handle-nw {
-  left: 2px;
-  top: 2px;
-  cursor: nw-resize;
-  border-left: 3px solid #5b9aea;
-  border-top: 3px solid #5b9aea;
-}
-
-.metrics-dashboard-grid.is-editing .react-resizable-handle-e,
-.metrics-dashboard-grid.is-editing .react-resizable-handle-w {
+.metrics-dashboard-grid.is-editing .react-resizable-handle-e {
   top: 14px;
-  width: 10px;
+  width: 12px;
   height: calc(100% - 28px);
   margin-top: 0;
   transform: none;
 }
 
 .metrics-dashboard-grid.is-editing .react-resizable-handle-e {
-  right: -2px;
+  right: -3px;
   cursor: ew-resize;
   background: rgba(91, 154, 234, 0.2);
   border-radius: 4px;
 }
 
-.metrics-dashboard-grid.is-editing .react-resizable-handle-w {
-  left: -2px;
-  cursor: ew-resize;
-  background: rgba(91, 154, 234, 0.2);
-  border-radius: 4px;
-}
-
-.metrics-dashboard-grid.is-editing .react-resizable-handle-n,
 .metrics-dashboard-grid.is-editing .react-resizable-handle-s {
   left: 14px;
   width: calc(100% - 28px);
-  height: 10px;
+  height: 12px;
   margin-left: 0;
   transform: none;
 }
 
-.metrics-dashboard-grid.is-editing .react-resizable-handle-n {
-  top: -2px;
-  cursor: ns-resize;
-  background: rgba(91, 154, 234, 0.2);
-  border-radius: 4px;
-}
-
 .metrics-dashboard-grid.is-editing .react-resizable-handle-s {
-  bottom: -2px;
+  bottom: -3px;
   cursor: ns-resize;
   background: rgba(91, 154, 234, 0.2);
   border-radius: 4px;
 }
 
 .metrics-dashboard-grid .react-grid-item.react-grid-placeholder {
-  background: rgba(91, 154, 234, 0.12);
+  background: rgba(91, 154, 234, 0.14);
   border: 2px dashed rgba(91, 154, 234, 0.45);
   border-radius: 12px;
   opacity: 1;
