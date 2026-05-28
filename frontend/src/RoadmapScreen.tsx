@@ -855,32 +855,63 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     pinAppliedRef.current = true
   }, [boards])
 
-  const loadRoadmap = async () => {
-    setLoading(true)
-    setError(null)
-    try {
+  const roadmapAbortRef = useRef<AbortController | null>(null)
+  const roadmapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const roadmapMountedRef = useRef(false)
+  // Инкремент принудительно перезапускает loadRoadmap (после синка / push сроков)
+  const [roadmapRefreshToken, setRoadmapRefreshToken] = useState(0)
+  const triggerRoadmapLoad = useCallback(() => setRoadmapRefreshToken((n) => n + 1), [])
+
+  const loadRoadmap = useCallback(
+    (signal: AbortSignal) => {
+      setLoading(true)
+      setError(null)
       const params = new URLSearchParams({ from, to })
       if (scale === 'all') params.set('include_all', 'true')
       for (const id of selectedBoardIds) params.append('board_id', id)
-      const roadmap = await getJson<RoadmapResponse>(`/api/roadmap?${params}`)
-      setData({ ...roadmap, items: normalizeRoadmapItems(roadmap.items ?? []) })
-      if (roadmap.boards.length) {
-        setBoards((prev) => {
-          const merged = new Map(prev.map((board) => [board.id, board]))
-          for (const board of roadmap.boards) merged.set(board.id, board)
-          return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name, 'ru'))
+      getJson<RoadmapResponse>(`/api/roadmap?${params}`, { signal })
+        .then((roadmap) => {
+          setData({ ...roadmap, items: normalizeRoadmapItems(roadmap.items ?? []) })
+          if (roadmap.boards.length) {
+            setBoards((prev) => {
+              const merged = new Map(prev.map((board) => [board.id, board]))
+              for (const board of roadmap.boards) merged.set(board.id, board)
+              return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name, 'ru'))
+            })
+          }
         })
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось загрузить roadmap')
-    } finally {
-      setLoading(false)
-    }
-  }
+        .catch((err: unknown) => {
+          if (err instanceof Error && err.name === 'AbortError') return
+          setError(err instanceof Error ? err.message : 'Не удалось загрузить roadmap')
+        })
+        .finally(() => {
+          setLoading(false)
+        })
+    },
+    [from, to, scale, selectedBoardIds],
+  )
 
   useEffect(() => {
-    void loadRoadmap()
-  }, [selectedBoardIds, from, to, scale])
+    // Отменяем предыдущий таймер и in-flight запрос
+    if (roadmapTimerRef.current !== null) clearTimeout(roadmapTimerRef.current)
+    roadmapAbortRef.current?.abort()
+    const controller = new AbortController()
+    roadmapAbortRef.current = controller
+
+    // Первый рендер и принудительный перезапуск — без задержки.
+    // Смена периода/досок — дебаунс 400 мс, чтобы не стрелять при каждом шаге навигации.
+    const isFirstMount = !roadmapMountedRef.current
+    roadmapMountedRef.current = true
+    const delay = isFirstMount || roadmapRefreshToken > 0 ? 0 : 400
+    roadmapTimerRef.current = setTimeout(() => {
+      loadRoadmap(controller.signal)
+    }, delay)
+
+    return () => {
+      if (roadmapTimerRef.current !== null) clearTimeout(roadmapTimerRef.current)
+      controller.abort()
+    }
+  }, [loadRoadmap, roadmapRefreshToken])
 
   const applyPeriodForScale = useCallback(
     (nextScale: Scale, year: number, quarter: number, month: number) => {
@@ -960,7 +991,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
         throw new Error(finished.message ?? 'Выгрузка завершилась с ошибкой')
       }
       await loadBoards(true)
-      await loadRoadmap()
+      triggerRoadmapLoad()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось обновить выгрузку')
     } finally {
@@ -1272,7 +1303,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
         throw new Error(failed.map((row) => `#${row.id}: ${row.error ?? 'ошибка'}`).join('; '))
       }
       setSchedulingOverrides({})
-      await loadRoadmap()
+      triggerRoadmapLoad()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось обновить сроки в TFS')
     } finally {

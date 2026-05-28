@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,6 +24,12 @@ class Board(Base):
 
 class WorkItem(Base):
     __tablename__ = "work_items"
+    __table_args__ = (
+        # Ускоряет основной фильтр Roadmap: тип + диапазон дат
+        Index("ix_work_items_type_start_target", "work_item_type", "start_date", "target_date"),
+        # Ускоряет загрузку требований/ошибок по родителю
+        Index("ix_work_items_type_parent", "work_item_type", "parent_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     rev: Mapped[int | None] = mapped_column(Integer)

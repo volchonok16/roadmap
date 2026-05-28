@@ -83,8 +83,8 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   }
 }
 
-export async function getJson<T>(path: string): Promise<T> {
-  const response = await apiFetch(path)
+export async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await apiFetch(path, init ?? {})
   if (!response.ok) {
     throw new Error(await readApiError(response))
   }

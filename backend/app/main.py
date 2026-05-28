@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.auth_service import (
     bridge_allowed_origins,
@@ -29,7 +29,7 @@ from app.sync_service import (
     work_item_release_label,
     work_item_tags,
 )
-from app.db import Base, SessionLocal, engine, get_db
+from app.db import Base, SessionLocal, engine, ensure_perf_indexes, get_db
 from app.metrics_preferences import default_metrics_ui_preferences, normalize_metrics_ui_preferences
 from app.metrics_service import load_metrics_dashboard, refresh_metrics_shipments
 from app.user_preferences_service import (
@@ -92,6 +92,7 @@ def startup() -> None:
         fail_stale_running_syncs(db, max_age_minutes=settings.sync_stale_running_minutes)
     finally:
         db.close()
+    ensure_perf_indexes()
 
 
 async def run_sync_background(
@@ -358,12 +359,30 @@ def merge_board_catalog(boards_rows: list[Board], change_rows: list[WorkItem]) -
 
 
 def work_item_url(row: WorkItem, tfs_auth: TfsAuth | None = None) -> str:
-    stored_url = row.raw.get("url") if isinstance(row.raw, dict) else None
-    if stored_url:
-        return str(stored_url)
     base_url = (tfs_auth.base_url if tfs_auth else settings.tfs_base_url).rstrip("/")
     project = tfs_auth.project if tfs_auth else settings.tfs_project
     return f"{base_url}/{project}/_workitems/edit/{row.id}"
+
+
+# Колонки WorkItem, нужные для /api/roadmap.
+# Тяжёлые JSONB (raw, relations, compact_fields, referenced_persons/nodes) не грузим.
+_ROADMAP_WORK_ITEM_COLS = [
+    WorkItem.id,
+    WorkItem.parent_id,
+    WorkItem.board_id,
+    WorkItem.title,
+    WorkItem.work_item_type,
+    WorkItem.state,
+    WorkItem.area_path,
+    WorkItem.area_leaf,
+    WorkItem.assigned_to_name,
+    WorkItem.assigned_to_unique_name,
+    WorkItem.assigned_to_avatar_url,
+    WorkItem.start_date,
+    WorkItem.target_date,
+    WorkItem.closed_date,
+    WorkItem.fields,  # нужен для release label + kanban column
+]
 
 
 @app.get("/api/boards", response_model=list[BoardOut])
@@ -551,20 +570,24 @@ def roadmap(
         )
     query = apply_board_scope(query, board_id or None)
 
-    change_rows = query.order_by(WorkItem.start_date, WorkItem.id).all()
+    _lo = load_only(*_ROADMAP_WORK_ITEM_COLS)
+    change_rows = query.options(_lo).order_by(WorkItem.start_date, WorkItem.id).all()
+    change_ids = [item.id for item in change_rows]
     requirement_rows = (
         db.query(WorkItem)
+        .options(_lo)
         .filter(
             WorkItem.work_item_type == "Требование",
-            WorkItem.parent_id.in_([item.id for item in change_rows] or [-1]),
+            WorkItem.parent_id.in_(change_ids or [-1]),
         )
         .order_by(WorkItem.id)
         .all()
     )
 
-    parent_ids = {row.id for row in change_rows} | {row.id for row in requirement_rows}
+    parent_ids = set(change_ids) | {row.id for row in requirement_rows}
     error_rows = (
         db.query(WorkItem)
+        .options(_lo)
         .filter(
             WorkItem.work_item_type.in_(settings.error_type_list),
             WorkItem.parent_id.in_(list(parent_ids) or [-1]),
