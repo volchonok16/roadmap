@@ -144,17 +144,36 @@ def identity_name(value: Any) -> tuple[str | None, str | None, str | None]:
     return None, None, None
 
 
-def _api_version_candidates(preferred: str | None = None) -> tuple[str, ...]:
-    ordered = (preferred or settings.tfs_api_version, "6.1", "6.0", "5.1")
+def _dedupe_api_versions(versions: Iterable[str]) -> tuple[str, ...]:
     seen: set[str] = set()
     result: list[str] = []
-    for version in ordered:
+    for version in versions:
         version = version.strip()
         if not version or version in seen:
             continue
         seen.add(version)
         result.append(version)
     return tuple(result)
+
+
+def _api_version_candidates(preferred: str | None = None) -> tuple[str, ...]:
+    ordered = (preferred or settings.tfs_api_version, "6.1", "6.0", "5.1")
+    return _dedupe_api_versions(ordered)
+
+
+def _wit_batch_api_version_candidates(preferred: str | None = None) -> tuple[str, ...]:
+    """workItemsBatch на TFS 6.1 часто требует api-version с суффиксом -preview."""
+    base = (preferred or settings.tfs_api_version).strip()
+    ordered: list[str] = []
+    if base:
+        ordered.append(base)
+        if "preview" not in base.lower():
+            root = base.split("-", 1)[0]
+            if re.fullmatch(r"\d+\.\d+", root):
+                ordered.append(f"{root}-preview")
+                ordered.append(f"{root}-preview.1")
+    ordered.extend(["6.1-preview", "6.1-preview.1", "6.0-preview", "6.0", "5.1"])
+    return _dedupe_api_versions(ordered)
 
 
 CONTRIBUTION_API_VERSIONS = ("6.1-preview.1", "5.1-preview.1")
@@ -917,8 +936,13 @@ class TfsClient:
         raise httpx.HTTPError(f"PATCH failed without response for work item {item_id}")
 
     async def _post_with_api_versions(self, path: str, *, json: dict[str, Any]) -> httpx.Response:
+        versions = (
+            _wit_batch_api_version_candidates()
+            if "workitemsbatch" in path.lower()
+            else _api_version_candidates()
+        )
         last_response: httpx.Response | None = None
-        for api_version in _api_version_candidates():
+        for api_version in versions:
             for attempt in range(1, 4):
                 try:
                     response = await self.client.post(path, params={"api-version": api_version}, json=json)
@@ -937,8 +961,10 @@ class TfsClient:
                 last_response = response
                 if response.status_code == 200:
                     return response
-                if response.status_code == 400 and "out of range" in response.text.lower():
-                    break
+                if response.status_code == 400:
+                    body_lower = response.text.lower()
+                    if "out of range" in body_lower or "preview" in body_lower:
+                        break
                 return response
         if last_response is not None:
             return last_response
