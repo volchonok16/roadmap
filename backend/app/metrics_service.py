@@ -280,6 +280,11 @@ def load_metrics_dashboard(
         .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
         .count()
     )
+    parents = (
+        db.query(WorkItem)
+        .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
+        .all()
+    )
     parent_ids = [row.id for row in parents]
     requirement_ids: list[int] = []
     requirements_count = 0

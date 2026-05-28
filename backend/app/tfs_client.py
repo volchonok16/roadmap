@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -719,7 +719,12 @@ class TfsClient:
             raise last_exc
         return []
 
-    async def get_work_items_batch(self, ids: list[int]) -> list[dict[str, Any]]:
+    async def get_work_items_batch(
+        self,
+        ids: list[int],
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[dict[str, Any]]:
         if not ids:
             return []
 
@@ -753,11 +758,18 @@ class TfsClient:
             response.raise_for_status()
             batch = response.json()
             result.extend(as_work_item_list(batch.get("value") if isinstance(batch, dict) else None))
+            if on_progress is not None:
+                on_progress(min(offset + len(chunk), len(ids)), len(ids))
             await asyncio.sleep(settings.tfs_request_delay_seconds)
 
         return result
 
-    async def enrich_scheduling_fields(self, items: list[dict[str, Any]]) -> None:
+    async def enrich_scheduling_fields(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> None:
         """Дозагрузка Start/Target Date, если batch не вернул пустые поля."""
         if not items:
             return
@@ -790,6 +802,8 @@ class TfsClient:
                     continue
                 fields = item.setdefault("fields", {})
                 fields.update(row.get("fields") or {})
+            if on_progress is not None:
+                on_progress(min(offset + len(chunk), len(missing_ids)), len(missing_ids))
             await asyncio.sleep(settings.tfs_request_delay_seconds)
 
     async def get_work_item_compact_data(self, item_id: int, team_name: str | None = None) -> dict[str, Any] | None:

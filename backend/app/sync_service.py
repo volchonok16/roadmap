@@ -566,8 +566,31 @@ async def run_sync(
         touch_sync_progress(db, sync_run, f"Найдено {len(change_ids)} ЗНИ{cap_note}, загрузка карточек…")
         close_db_session(db)
         db = None  # type: ignore[assignment]
-        change_items = await client.get_work_items_batch(change_ids)
-        await client.enrich_scheduling_fields(change_items)
+        progress_step = max(settings.tfs_batch_size * 10, 1000)
+        last_loaded = 0
+
+        def report_change_load(processed: int, total: int) -> None:
+            nonlocal last_loaded
+            if processed < total and processed - last_loaded < progress_step:
+                return
+            last_loaded = processed
+            session, row = open_db()
+            touch_sync_progress(session, row, f"Загрузка карточек ЗНИ: {processed}/{total}")
+            close_db_session(session)
+
+        change_items = await client.get_work_items_batch(change_ids, on_progress=report_change_load)
+        last_enriched = 0
+
+        def report_enrich(processed: int, total: int) -> None:
+            nonlocal last_enriched
+            if processed < total and processed - last_enriched < progress_step:
+                return
+            last_enriched = processed
+            session, row = open_db()
+            touch_sync_progress(session, row, f"Дозагрузка дат ЗНИ: {processed}/{total}")
+            close_db_session(session)
+
+        await client.enrich_scheduling_fields(change_items, on_progress=report_enrich)
         db, sync_run = open_db()
         save_raw_payload(db, sync_run_id, "change_requests_batch", {"ids": change_ids, "items": change_items})
 
