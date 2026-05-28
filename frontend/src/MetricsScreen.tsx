@@ -5,6 +5,7 @@ import { apiFetch, clearSessionId, getJson } from './api'
 import MetricsDashboardGrid from './MetricsDashboardGrid'
 import MetricsChartTypePicker from './MetricsChartTypePicker'
 import MetricsReleaseChart from './MetricsReleaseChart'
+import MetricsProgressChart from './MetricsProgressChart'
 import { readMetricsChartType, writeMetricsChartType, type MetricsChartType } from './metricsChartType'
 import { readMetricsGridLayout, writeMetricsGridLayout, type MetricsGridLayoutItem } from './metricsDashboardLayout'
 import {
@@ -15,6 +16,7 @@ import {
 import { readMetricsStreamBoardId, writeMetricsStreamBoardId } from './metricsBoard'
 import {
   buildHistogramFromShipments,
+  buildReleaseProgressPoints,
   shipmentsForBoard,
   type MetricsDashboard,
 } from './metricsDashboard'
@@ -85,6 +87,11 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         .filter((p) => p.label !== 'Без релиза' && p.label !== 'Closed без даты')
         .reduce((acc, p) => acc + p.shipped, 0) + releaseHistogram.withoutRelease.shipped,
     [releaseHistogram],
+  )
+
+  const releaseProgressPoints = useMemo(
+    () => buildReleaseProgressPoints(streamShipments, dashboard?.releases ?? [], { maxBars: 20 }),
+    [streamShipments, dashboard?.releases],
   )
 
   const loadMetrics = useCallback(async (rebuildMart = false) => {
@@ -199,13 +206,14 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     streamBoardId ? boards.find((board) => board.id === streamBoardId)?.name ?? 'Доска' : 'Все доски'
 
   const shippedTotal = shippedTotalFromHistogram
-  const requirementsCount = dashboard?.totals.requirementsCount ?? 0
-  const errorsCount = dashboard?.totals.errorsCount ?? 0
-  const totalTasksCount = dashboard?.totals.totalTasksCount ?? requirementsCount + errorsCount
+  const activeRequirementsCount = dashboard?.totals.activeRequirementsCount ?? 0
+  const activeErrorsCount = dashboard?.totals.activeErrorsCount ?? 0
+  const activeTotalCount = dashboard?.totals.activeTotalCount ?? activeRequirementsCount + activeErrorsCount
 
   const widgetValues: Record<MetricWidgetId, number | null> = {
     'streams-count': dashboard?.totals.streams ?? null,
     'release-shipment': shippedTotal,
+    'release-progress': releaseProgressPoints.length,
   }
 
   const streamBoardPicker = (
@@ -225,6 +233,37 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         </div>
       )
     }
+    if (kind === 'progress-chart') {
+      return (
+        <div className="metrics-widget-body metrics-widget-body-chart">
+          <p className="metrics-widget-chart-summary metrics-widget-no-drag">
+            {loading
+              ? '…'
+              : `${streamBoardName}: ${releaseProgressPoints.length} релизов в работе`}
+          </p>
+          <div className="metrics-totals-row metrics-widget-no-drag">
+            <span className="metrics-total-chip metrics-total-chip-green" title="Активные задачи (без Closed)">
+              Активных задач: {loading ? '…' : activeTotalCount.toLocaleString('ru-RU')}
+            </span>
+            <span className="metrics-total-chip metrics-total-chip-blue" title="Активные требования (без Closed)">
+              Требований: {loading ? '…' : activeRequirementsCount.toLocaleString('ru-RU')}
+            </span>
+            <span className="metrics-total-chip metrics-total-chip-red" title="Активные ошибки (без Closed)">
+              Ошибок: {loading ? '…' : activeErrorsCount.toLocaleString('ru-RU')}
+            </span>
+          </div>
+          <MetricsProgressChart
+            points={releaseProgressPoints}
+            loading={loading}
+            emptyLabel={
+              streamBoardId
+                ? 'Нет данных о прогрессе по этой доске'
+                : 'Нет данных в витрине'
+            }
+          />
+        </div>
+      )
+    }
     return (
       <div className="metrics-widget-body metrics-widget-body-chart">
         <p className="metrics-widget-chart-summary metrics-widget-no-drag">
@@ -235,17 +274,6 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
             ? ` · витрина ${new Date(dashboard.cacheBuiltAt).toLocaleString('ru-RU')}`
             : ''}
         </p>
-        <div className="metrics-totals-row metrics-widget-no-drag">
-          <span className="metrics-total-chip metrics-total-chip-green">
-            Всего задач: {totalTasksCount.toLocaleString('ru-RU')}
-          </span>
-          <span className="metrics-total-chip metrics-total-chip-blue">
-            Требований: {requirementsCount.toLocaleString('ru-RU')}
-          </span>
-          <span className="metrics-total-chip metrics-total-chip-red">
-            Ошибок: {errorsCount.toLocaleString('ru-RU')}
-          </span>
-        </div>
         <MetricsReleaseChart
           chartType={releaseChartType}
           data={releaseHistogram}

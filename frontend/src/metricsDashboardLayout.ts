@@ -16,14 +16,15 @@ export const METRICS_GRID_COLS = 12
 export const METRICS_GRID_ROW_HEIGHT = 36
 export const METRICS_GRID_MARGIN: [number, number] = [16, 16]
 /** Кэш в localStorage (миграция и офлайн-fallback; основное хранилище — API по учётной записи TFS). */
-export const METRICS_LAYOUT_STORAGE_KEY = 'metrics-dashboard-layout-v3'
+export const METRICS_LAYOUT_STORAGE_KEY = 'metrics-dashboard-layout-v4'
 
 export const defaultMetricsGridLayout: MetricsGridLayoutItem[] = [
   { i: 'streams-count', x: 0, y: 0, w: 3, h: 3, minW: 2, minH: 2, maxW: 4, maxH: 8 },
   { i: 'release-shipment', x: 3, y: 0, w: 9, h: 9, minW: 4, minH: 4, maxW: 12, maxH: 24 },
+  { i: 'release-progress', x: 0, y: 9, w: 12, h: 9, minW: 4, minH: 4, maxW: 12, maxH: 24 },
 ]
 
-const widgetIds = new Set<MetricWidgetId>(['streams-count', 'release-shipment'])
+const widgetIds = new Set<MetricWidgetId>(['streams-count', 'release-shipment', 'release-progress'])
 
 function isValidItem(item: unknown): item is MetricsGridLayoutItem {
   if (!item || typeof item !== 'object') return false
@@ -45,9 +46,14 @@ function isValidItem(item: unknown): item is MetricsGridLayoutItem {
 export function normalizeMetricsGridLayout(raw: unknown): MetricsGridLayoutItem[] {
   if (!Array.isArray(raw)) return defaultMetricsGridLayout
   const items = raw.filter(isValidItem)
-  if (items.length !== defaultMetricsGridLayout.length) return defaultMetricsGridLayout
   const ids = new Set(items.map((item) => item.i))
-  if (![...widgetIds].every((id) => ids.has(id))) return defaultMetricsGridLayout
+  // Если все обязательные виджеты присутствуют, принимаем раскладку (даже если новый виджет ещё не добавлен)
+  if (![...widgetIds].every((id) => ids.has(id))) {
+    // Добавляем отсутствующие виджеты из дефолта
+    const missing = defaultMetricsGridLayout.filter((item) => !ids.has(item.i))
+    if (missing.length > 0 && items.length > 0) return [...items, ...missing]
+    return defaultMetricsGridLayout
+  }
   return items
 }
 

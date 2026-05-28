@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 METRICS_GRID_COLS = 12
-WIDGET_IDS = frozenset({"streams-count", "release-shipment"})
+WIDGET_IDS = frozenset({"streams-count", "release-shipment", "release-progress"})
 CHART_TYPES = frozenset({"line", "bar", "area"})
 
 DEFAULT_LAYOUT: list[dict[str, Any]] = [
     {"i": "streams-count", "x": 0, "y": 0, "w": 3, "h": 3, "minW": 2, "minH": 2, "maxW": 4, "maxH": 8},
     {"i": "release-shipment", "x": 3, "y": 0, "w": 9, "h": 9, "minW": 4, "minH": 4, "maxW": 12, "maxH": 24},
+    {"i": "release-progress", "x": 0, "y": 9, "w": 12, "h": 9, "minW": 4, "minH": 4, "maxW": 12, "maxH": 24},
 ]
 DEFAULT_CHART_TYPES = {"release-shipment": "line"}
 
@@ -36,10 +37,13 @@ def normalize_layout(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return [dict(item) for item in DEFAULT_LAYOUT]
     items = [item for item in raw if _is_valid_layout_item(item)]
-    if len(items) != len(WIDGET_IDS):
-        return [dict(item) for item in DEFAULT_LAYOUT]
     ids = {item["i"] for item in items}
-    if ids != WIDGET_IDS:
+    # Добавляем отсутствующие новые виджеты из дефолта (для миграции старых раскладок)
+    missing = [dict(item) for item in DEFAULT_LAYOUT if item["i"] not in ids]
+    if missing:
+        items = items + missing
+    ids = {item["i"] for item in items}
+    if not WIDGET_IDS.issubset(ids):
         return [dict(item) for item in DEFAULT_LAYOUT]
     return items
 

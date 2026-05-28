@@ -336,27 +336,34 @@ def load_metrics_dashboard(
         .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
         .all()
     ]
+    _CLOSED_STATES = ("Closed", "Resolved", "Done", "Complete", "Completed")
+
     requirements_count = 0
+    active_requirements_count = 0
     requirement_ids: list[int] = []
     if parent_ids:
-        requirement_ids = [
-            row[0]
-            for row in db.query(WorkItem.id)
+        req_rows = (
+            db.query(WorkItem.id, WorkItem.state)
             .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
             .all()
-        ]
+        )
+        requirement_ids = [row[0] for row in req_rows]
         requirements_count = len(requirement_ids)
+        active_requirements_count = sum(1 for row in req_rows if row[1] not in _CLOSED_STATES)
     errors_count = 0
+    active_errors_count = 0
     error_parent_ids = list(dict.fromkeys([*parent_ids, *requirement_ids]))
     if error_parent_ids:
-        errors_count = (
-            db.query(WorkItem.id)
+        err_rows = (
+            db.query(WorkItem.id, WorkItem.state)
             .filter(
                 WorkItem.work_item_type.in_(settings.error_type_list),
                 WorkItem.parent_id.in_(error_parent_ids),
             )
-            .count()
+            .all()
         )
+        errors_count = len(err_rows)
+        active_errors_count = sum(1 for row in err_rows if row[1] not in _CLOSED_STATES)
 
     shipments = [
         {
@@ -410,6 +417,9 @@ def load_metrics_dashboard(
             "requirements_count": requirements_count,
             "errors_count": errors_count,
             "total_tasks_count": requirements_count + errors_count,
+            "active_requirements_count": active_requirements_count,
+            "active_errors_count": active_errors_count,
+            "active_total_count": active_requirements_count + active_errors_count,
         },
         "period_from": period_from.isoformat(),
         "period_to": period_to.isoformat(),

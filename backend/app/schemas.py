@@ -97,6 +97,9 @@ class MetricsTotalsOut(ApiModel):
     requirements_count: int = 0
     errors_count: int = 0
     total_tasks_count: int = 0
+    active_requirements_count: int = 0
+    active_errors_count: int = 0
+    active_total_count: int = 0
 
 
 class MetricsDashboardOut(ApiModel):

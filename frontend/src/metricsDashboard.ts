@@ -32,6 +32,9 @@ export type MetricsDashboard = {
     requirementsCount: number
     errorsCount: number
     totalTasksCount: number
+    activeRequirementsCount: number
+    activeErrorsCount: number
+    activeTotalCount: number
   }
   periodFrom: string
   periodTo: string
@@ -157,4 +160,51 @@ export function buildHistogramFromShipments(
 export function formatReleaseFromDashboard(label: string) {
   if (label === 'Closed без даты' || label === 'Без релиза') return label
   return shortReleaseLabel(label)
+}
+
+/** Точка на графике прогресса по релизам: shipped (закрыто), inProgress (в работе), errors (ошибки). */
+export type ReleaseProgressPoint = {
+  label: string
+  sortKey: number
+  shipped: number   // закрытые требования
+  inProgress: number  // req_total - shipped (ещё в работе)
+  errors: number   // закрытые ошибки
+}
+
+/** Строит данные для виджета «Прогресс по релизам» из shipments. */
+export function buildReleaseProgressPoints(
+  shipments: MetricsDashboardShipment[],
+  releases: MetricsDashboardRelease[],
+  options: { maxBars?: number; today?: Date } = {},
+): ReleaseProgressPoint[] {
+  const maxBars = options.maxBars ?? 20
+  const today = options.today ?? new Date()
+  const chartReleases = releasesForHistogram(releases, today)
+
+  const shipped = new Map<string, number>()
+  const total = new Map<string, number>()
+  const errors = new Map<string, number>()
+
+  for (const row of shipments) {
+    if (row.releaseLabel === 'Без релиза') continue
+    shipped.set(row.releaseLabel, (shipped.get(row.releaseLabel) ?? 0) + row.count)
+    total.set(row.releaseLabel, (total.get(row.releaseLabel) ?? 0) + row.reqTotal)
+    errors.set(row.releaseLabel, (errors.get(row.releaseLabel) ?? 0) + row.errorCount)
+  }
+
+  const points: ReleaseProgressPoint[] = chartReleases
+    .map((release) => {
+      const s = shipped.get(release.label) ?? 0
+      const t = total.get(release.label) ?? 0
+      return {
+        label: release.label,
+        sortKey: release.date ? new Date(release.date).getTime() : Number.MAX_SAFE_INTEGER,
+        shipped: s,
+        inProgress: Math.max(0, t - s),
+        errors: errors.get(release.label) ?? 0,
+      }
+    })
+    .filter((p) => p.shipped > 0 || p.inProgress > 0)
+
+  return points.slice(-maxBars)
 }

@@ -1,7 +1,7 @@
 /** Идентификаторы виджетов на странице метрик (раскладка — metricsDashboardLayout). */
-export type MetricWidgetId = 'streams-count' | 'release-shipment'
+export type MetricWidgetId = 'streams-count' | 'release-shipment' | 'release-progress'
 
-export type MetricWidgetKind = 'kpi' | 'release-chart'
+export type MetricWidgetKind = 'kpi' | 'release-chart' | 'progress-chart'
 
 export type MetricWidgetLayout = {
   id: MetricWidgetId
@@ -22,5 +22,11 @@ export const defaultMetricWidgets: MetricWidgetLayout[] = [
     kind: 'release-chart',
     title: 'Отгрузка по релизам',
     hint: 'Closed по релизам · тип графика справа',
+  },
+  {
+    id: 'release-progress',
+    kind: 'progress-chart',
+    title: 'Прогресс по релизам',
+    hint: 'Сколько требований закрыто и ещё в работе по каждому релизу',
   },
 ]

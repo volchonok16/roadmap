@@ -4293,6 +4293,66 @@ h2 {
   white-space: nowrap;
 }
 
+/* is-gray — для прогресс-виджета */
+.metrics-bar-chart-legend-item.is-gray .metrics-bar-chart-legend-dot {
+  background: rgba(148, 163, 184, 0.6);
+}
+
+/* Progress Chart — стековые столбики */
+.metrics-bar-chart-progress .metrics-bar-chart-col {
+  flex: 0 0 auto;
+  min-width: 36px;
+  max-width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.metrics-progress-bar-wrap {
+  width: 22px;
+  display: flex;
+  flex-direction: column-reverse;
+  overflow: hidden;
+  border-radius: 3px;
+  position: relative;
+  cursor: default;
+}
+
+.metrics-progress-bar-segment {
+  width: 100%;
+  transition: height 0.3s ease;
+  position: relative;
+}
+
+.metrics-progress-bar-segment.is-green {
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.9) 0%, rgba(34, 197, 94, 0.55) 100%);
+}
+
+.metrics-progress-bar-segment.is-gray {
+  background: rgba(148, 163, 184, 0.32);
+}
+
+.metrics-progress-bar-segment .metrics-bar-chart-bar-value {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 8px;
+  font-weight: 700;
+  color: rgba(30, 41, 59, 0.85);
+  white-space: nowrap;
+}
+
+.metrics-progress-error-dot {
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(239, 68, 68, 0.9);
+  text-align: center;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
 .metrics-dashboard-foot {
   margin: 0;
   padding: 10px 18px 14px;
