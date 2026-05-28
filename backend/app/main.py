@@ -5,6 +5,7 @@ import httpx
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
@@ -76,7 +77,13 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except IntegrityError as exc:
+        # Multi-worker startup can race on CREATE TABLE checkfirst.
+        message = str(exc)
+        if "pg_type_typname_nsp_index" not in message or "auth_sessions" not in message:
+            raise
     db = SessionLocal()
     try:
         fail_stale_running_syncs(db, max_age_minutes=0)
