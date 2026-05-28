@@ -28,6 +28,9 @@ export type MetricsDashboard = {
     zniCount: number
     closedRequirements: number
     closedWithoutRelease: number
+    requirementsCount: number
+    errorsCount: number
+    totalTasksCount: number
   }
   periodFrom: string
   periodTo: string

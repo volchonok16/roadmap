@@ -8,6 +8,7 @@ from sqlalchemy import and_, delete, or_
 from sqlalchemy.orm import Session
 
 from app.board_mapping import streams_board_display_name
+from app.config import settings
 from app.models import Board, MetricsShipment, WorkItem
 from app.release_fields import work_item_release_label
 from app.requirement_status import is_requirement_closed
@@ -131,7 +132,17 @@ def _collect_release_labels_from_db(
         .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
         .all()
     )
-    parent_ids = [row.id for row in parents]
+    parent_ids = [
+        row[0]
+        for row in (
+            db.query(WorkItem.id)
+            .filter(
+                WorkItem.work_item_type == CHANGE_TYPE,
+                _parent_period_filter(period_from, period_to),
+            )
+            .all()
+        )
+    ]
     parent_by_id = {row.id: row for row in parents}
     requirements: list[WorkItem] = []
     if parent_ids:
@@ -269,6 +280,30 @@ def load_metrics_dashboard(
         .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
         .count()
     )
+    parent_ids = [row.id for row in parents]
+    requirement_ids: list[int] = []
+    requirements_count = 0
+    if parent_ids:
+        requirement_ids = [
+            row[0]
+            for row in (
+                db.query(WorkItem.id)
+                .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
+                .all()
+            )
+        ]
+        requirements_count = len(requirement_ids)
+    error_parent_ids = list(dict.fromkeys([*parent_ids, *requirement_ids]))
+    errors_count = 0
+    if error_parent_ids:
+        errors_count = (
+            db.query(WorkItem)
+            .filter(
+                WorkItem.work_item_type.in_(settings.error_type_list),
+                WorkItem.parent_id.in_(error_parent_ids),
+            )
+            .count()
+        )
 
     shipments = [
         {
@@ -312,6 +347,9 @@ def load_metrics_dashboard(
             "zni_count": zni_count,
             "closed_requirements": closed_total + without_release,
             "closed_without_release": without_release,
+            "requirements_count": requirements_count,
+            "errors_count": errors_count,
+            "total_tasks_count": requirements_count + errors_count,
         },
         "period_from": period_from.isoformat(),
         "period_to": period_to.isoformat(),

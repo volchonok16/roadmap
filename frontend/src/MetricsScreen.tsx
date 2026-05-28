@@ -193,6 +193,9 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const shippedTotal = releaseHistogram
     .filter((row) => row.label !== 'Без релиза' && row.label !== 'Closed без даты')
     .reduce((acc, row) => acc + row.value, 0)
+  const requirementsCount = dashboard?.totals.requirementsCount ?? 0
+  const errorsCount = dashboard?.totals.errorsCount ?? 0
+  const totalTasksCount = dashboard?.totals.totalTasksCount ?? requirementsCount + errorsCount
 
   const widgetValues: Record<MetricWidgetId, number | null> = {
     'streams-count': dashboard?.totals.streams ?? null,
@@ -226,6 +229,17 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
             ? ` · витрина ${new Date(dashboard.cacheBuiltAt).toLocaleString('ru-RU')}`
             : ''}
         </p>
+        <div className="metrics-totals-row metrics-widget-no-drag">
+          <span className="metrics-total-chip metrics-total-chip-green">
+            Всего задач: {totalTasksCount.toLocaleString('ru-RU')}
+          </span>
+          <span className="metrics-total-chip metrics-total-chip-blue">
+            Требований: {requirementsCount.toLocaleString('ru-RU')}
+          </span>
+          <span className="metrics-total-chip metrics-total-chip-red">
+            Ошибок: {errorsCount.toLocaleString('ru-RU')}
+          </span>
+        </div>
         <MetricsReleaseChart
           chartType={releaseChartType}
           series={releaseHistogram}
