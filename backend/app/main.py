@@ -491,8 +491,10 @@ def get_metrics_ui_preferences(
     account_key = require_account_key(auth)
     stored = read_user_preference(db, account_key, METRICS_UI_PREFERENCE_KEY)
     if stored is None:
-        raise HTTPException(status_code=404, detail="Metrics preferences not found")
-    normalized = normalize_metrics_ui_preferences(stored)
+        normalized = default_metrics_ui_preferences()
+        write_user_preference(db, account_key, METRICS_UI_PREFERENCE_KEY, normalized)
+    else:
+        normalized = normalize_metrics_ui_preferences(stored)
     return MetricsUiPreferencesOut.model_validate(normalized)
 
 

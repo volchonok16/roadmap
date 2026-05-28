@@ -371,6 +371,22 @@ def relation_parent_map(change_payloads: list[dict[str, Any]]) -> dict[int, int]
     return result
 
 
+def relation_parent_map_from_raw(raw_items: list[dict[str, Any]]) -> dict[int, int]:
+    """То же, что relation_parent_map, но принимает «сырые» item-ы прямо из TFS API
+    (до item_payload). Используется, чтобы не пропускать требования ЗНИ в статусах,
+    не входящих в CHANGE_REQUEST_STATES."""
+    result: dict[int, int] = {}
+    for item in as_work_item_list(raw_items):
+        parent_id = item["id"]
+        for relation in as_relation_list(item.get("relations")):
+            if not is_requirement_link(relation):
+                continue
+            child_id = relation_target_id(relation)
+            if child_id is not None:
+                result[child_id] = parent_id
+    return result
+
+
 async def fetch_compact_map(
     client: TfsClient,
     change_items: list[dict[str, Any]],
@@ -674,7 +690,13 @@ async def run_sync(
 
         if not board_catalog:
             board_catalog = board_snapshots_from_rows(db.query(Board).all())
-        parent_map = relation_parent_map(change_payloads)
+        # Строим карту child→parent по ВСЕМ загруженным ЗНИ, а не только по
+        # отфильтрованным по статусу — иначе требования ЗНИ в статусах вне
+        # CHANGE_REQUEST_STATES не попадают в выгрузку совсем.
+        parent_map = relation_parent_map_from_raw(as_work_item_list(change_items))
+        # Добавляем compact-relations из обработанных payloads (могут содержать доп. связи)
+        for child_id, parent_id in relation_parent_map(change_payloads).items():
+            parent_map.setdefault(child_id, parent_id)
         touch_sync_progress(db, sync_run, f"Загрузка связей ({len(parent_map)} элементов)…")
         close_db_session(db)
         db = None  # type: ignore[assignment]
