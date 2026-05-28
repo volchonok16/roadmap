@@ -110,6 +110,18 @@ async def run_sync_background(
         db.close()
 
 
+async def run_metrics_refresh_background(
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> None:
+    db = SessionLocal()
+    try:
+        refresh_metrics_shipments(db, date_from=date_from, date_to=date_to)
+    finally:
+        db.close()
+
+
 def require_tfs_auth(x_session_id: str | None = Header(default=None, alias="X-Session-Id")) -> TfsAuth:
     auth = get_session(x_session_id)
     if auth is None:
@@ -487,14 +499,14 @@ def put_metrics_ui_preferences(
 
 
 @app.get("/api/metrics/dashboard", response_model=MetricsDashboardOut)
-def metrics_dashboard(
+async def metrics_dashboard(
     date_from: date = Query(alias="from"),
     date_to: date = Query(alias="to"),
     refresh: bool = Query(default=False),
     db: Session = Depends(get_db),
 ) -> MetricsDashboardOut:
     if refresh:
-        refresh_metrics_shipments(db, date_from=date_from, date_to=date_to)
+        asyncio.create_task(run_metrics_refresh_background(date_from=date_from, date_to=date_to))
     payload = load_metrics_dashboard(db, date_from=date_from, date_to=date_to)
     return MetricsDashboardOut.model_validate(payload)
 

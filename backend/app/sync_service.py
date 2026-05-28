@@ -516,11 +516,50 @@ async def run_sync(
         touch_sync_progress(db, sync_run, "Поиск ЗНИ в TFS (WIQL)…")
         close_db_session(db)
         db = None  # type: ignore[assignment]
-        change_ids = await client.get_change_request_ids(
-            date_from=date_from if period_mode else None,
-            date_to=date_to if period_mode else None,
-            limit_results=not period_mode,
-        )
+        if period_mode:
+            change_ids = await client.get_change_request_ids(
+                date_from=date_from,
+                date_to=date_to,
+                limit_results=True,
+            )
+        else:
+            boards_without_area = sum(
+                1 for board in board_catalog if not getattr(board, "area_path", None)
+            )
+            area_paths = sorted(
+                {
+                    str(board.area_path).strip()
+                    for board in board_catalog
+                    if getattr(board, "area_path", None) and str(board.area_path).strip()
+                }
+            )
+            change_ids_by_board: list[int] = []
+            for index, area_path in enumerate(area_paths, start=1):
+                db, sync_run = open_db()
+                touch_sync_progress(
+                    db,
+                    sync_run,
+                    f"Поиск ЗНИ по доскам ({index}/{len(area_paths)}): {area_path}",
+                )
+                close_db_session(db)
+                db = None  # type: ignore[assignment]
+                ids = await client.get_change_request_ids(
+                    limit_results=False,
+                    area_path=area_path,
+                )
+                change_ids_by_board.extend(ids)
+            change_ids = list(dict.fromkeys(change_ids_by_board))
+            if boards_without_area > 0 or not change_ids:
+                db, sync_run = open_db()
+                touch_sync_progress(
+                    db,
+                    sync_run,
+                    "Часть досок без AreaPath, добавляю общий поиск ЗНИ…",
+                )
+                close_db_session(db)
+                db = None  # type: ignore[assignment]
+                all_ids = await client.get_change_request_ids(limit_results=False)
+                change_ids = list(dict.fromkeys([*change_ids, *all_ids]))
         wiql_cap = settings.tfs_wiql_max_results
         cap_note = f" (лимит {wiql_cap})" if not period_mode and len(change_ids) >= wiql_cap else ""
         db, sync_run = open_db()
@@ -653,7 +692,7 @@ async def run_sync(
         db.add(sync_run)
         db.commit()
         db.refresh(sync_run)
-        if sync_run.status == "success":
+        if sync_run.status == "success" and settings.metrics_refresh_after_sync:
             try:
                 refresh_metrics_shipments(db)
             except Exception as metrics_exc:

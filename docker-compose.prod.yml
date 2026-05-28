@@ -5,12 +5,18 @@
 
 services:
   backend:
+    command: sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${BACKEND_WORKERS:-2}"
     ports:
       - "127.0.0.1:8000:8000"
     environment:
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-https://pallink.fun}
       API_PUBLIC_URL: ${API_PUBLIC_URL:-https://api.pallink.fun}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-https://pallink.fun,https://www.pallink.fun}
+      TFS_BATCH_SIZE: ${TFS_BATCH_SIZE:-50}
+      TFS_REQUEST_DELAY_SECONDS: ${TFS_REQUEST_DELAY_SECONDS:-0.4}
+      TFS_COMPACT_CONCURRENCY: ${TFS_COMPACT_CONCURRENCY:-2}
+      TFS_WIQL_MAX_RESULTS: ${TFS_WIQL_MAX_RESULTS:-15000}
+      METRICS_REFRESH_AFTER_SYNC: ${METRICS_REFRESH_AFTER_SYNC:-false}
 
   frontend:
     build:

@@ -671,6 +671,7 @@ class TfsClient:
         date_from: date | None = None,
         date_to: date | None = None,
         limit_results: bool = True,
+        area_path: str | None = None,
     ) -> list[int]:
         types = ", ".join(wiql_quote(item) for item in settings.change_type_list)
         project = wiql_quote(self.project)
@@ -682,18 +683,22 @@ class TfsClient:
             period_clause = (
                 f" AND [System.ChangedDate] >= {start} AND [System.ChangedDate] <= {end}"
             )
+        area_clause = ""
+        if area_path:
+            area_clause = f" AND [System.AreaPath] UNDER {wiql_quote(area_path)}"
 
         queries = [
             (
                 "full",
                 f"SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = {project} "
                 f"AND [System.WorkItemType] IN ({types}) AND [System.State] IN ({states})"
-                f"{period_clause} ORDER BY [System.ChangedDate] DESC",
+                f"{period_clause}{area_clause} ORDER BY [System.ChangedDate] DESC",
             ),
             (
                 "no-state-filter",
                 f"SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = {project} "
-                f"AND [System.WorkItemType] IN ({types}){period_clause} ORDER BY [System.ChangedDate] DESC",
+                f"AND [System.WorkItemType] IN ({types})"
+                f"{period_clause}{area_clause} ORDER BY [System.ChangedDate] DESC",
             ),
         ]
 

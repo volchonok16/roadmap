@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     tfs_fetch_compact_details: bool = Field(default=True, alias="TFS_FETCH_COMPACT_DETAILS")
     tfs_compact_concurrency: int = Field(default=4, alias="TFS_COMPACT_CONCURRENCY")
     tfs_wiql_max_results: int = Field(default=15000, alias="TFS_WIQL_MAX_RESULTS")
+    metrics_refresh_after_sync: bool = Field(default=False, alias="METRICS_REFRESH_AFTER_SYNC")
 
     change_request_states: str = Field(
         default="Express Analysis,Analysis Backlog,Analysis,Development,UAT,Pilot,Closed",
