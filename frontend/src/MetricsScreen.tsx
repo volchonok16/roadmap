@@ -24,6 +24,7 @@ import {
   requirementReworkSummaryForBoard,
   requirementReworksForBoard,
   shipmentsForBoard,
+  type MetricsAnalysisBoard,
   type MetricsAnalysisStay,
   type MetricsDashboard,
   type MetricsRequirementRework,
@@ -53,6 +54,46 @@ function readInitialMetricsBoardId(boards: MetricsDashboard['boards']) {
 function formatMetricValue(value: number | null) {
   if (value === null) return '—'
   return value.toLocaleString('ru-RU')
+}
+
+function dateKeyFromIso(value: string | null) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function isDateInRange(value: string | null, from: string, to: string) {
+  if (!from && !to) return true
+  const key = dateKeyFromIso(value)
+  if (!key) return false
+  if (from && key < from) return false
+  if (to && key > to) return false
+  return true
+}
+
+function summarizeAnalysisByBoard(rows: MetricsAnalysisStay[]): MetricsAnalysisBoard[] {
+  const groups = new Map<string, { boardId: string | null; boardName: string; days: number[] }>()
+  for (const row of rows) {
+    const key = row.boardId ?? row.boardName
+    const group = groups.get(key) ?? { boardId: row.boardId, boardName: row.boardName, days: [] }
+    group.days.push(row.daysInAnalysis)
+    groups.set(key, group)
+  }
+  return Array.from(groups.values())
+    .map((group) => ({
+      boardId: group.boardId,
+      boardName: group.boardName,
+      count: group.days.length,
+      avgDays: group.days.length
+        ? Math.round((group.days.reduce((acc, value) => acc + value, 0) / group.days.length) * 10) / 10
+        : 0,
+      maxDays: group.days.length ? Math.max(...group.days) : 0,
+    }))
+    .sort((left, right) => right.avgDays - left.avgDays || right.count - left.count)
 }
 
 function csvCell(value: string | number | null | undefined) {
@@ -133,6 +174,10 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const [layoutEditMode, setLayoutEditMode] = useState(false)
   const [gridLayout, setGridLayout] = useState<MetricsGridLayoutItem[]>(() => readMetricsGridLayout())
   const [uiPrefsReady, setUiPrefsReady] = useState(false)
+  const [analysisDateFrom, setAnalysisDateFrom] = useState('')
+  const [analysisDateTo, setAnalysisDateTo] = useState('')
+  const [reworkDateFrom, setReworkDateFrom] = useState('')
+  const [reworkDateTo, setReworkDateTo] = useState('')
   const [releaseChartType, setReleaseChartType] = useState<MetricsChartType>(() =>
     readMetricsChartType('release-shipment'),
   )
@@ -172,9 +217,19 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     [dashboard?.analysisStays, streamBoardId, boards],
   )
 
+  const filteredAnalysisStayRows = useMemo(
+    () => analysisStayRows.filter((row) => isDateInRange(row.changedAt, analysisDateFrom, analysisDateTo)),
+    [analysisStayRows, analysisDateFrom, analysisDateTo],
+  )
+
   const analysisBoardRows = useMemo(
-    () => analysisBoardSummaryForBoard(dashboard?.analysisByBoard ?? [], streamBoardId || null, boards),
-    [dashboard?.analysisByBoard, streamBoardId, boards],
+    () => {
+      if (!analysisDateFrom && !analysisDateTo) {
+        return analysisBoardSummaryForBoard(dashboard?.analysisByBoard ?? [], streamBoardId || null, boards)
+      }
+      return summarizeAnalysisByBoard(filteredAnalysisStayRows)
+    },
+    [dashboard?.analysisByBoard, streamBoardId, boards, analysisDateFrom, analysisDateTo, filteredAnalysisStayRows],
   )
 
   const reworkRows = useMemo(
@@ -182,9 +237,26 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     [dashboard?.requirementReworks, streamBoardId, boards],
   )
 
+  const filteredReworkRows = useMemo(
+    () => reworkRows.filter((row) => isDateInRange(row.changedAt, reworkDateFrom, reworkDateTo)),
+    [reworkRows, reworkDateFrom, reworkDateTo],
+  )
+
   const reworkBoardRows = useMemo(
-    () => requirementReworkSummaryForBoard(dashboard?.requirementReworksByBoard ?? [], streamBoardId || null, boards),
-    [dashboard?.requirementReworksByBoard, streamBoardId, boards],
+    () => {
+      if (!reworkDateFrom && !reworkDateTo) {
+        return requirementReworkSummaryForBoard(dashboard?.requirementReworksByBoard ?? [], streamBoardId || null, boards)
+      }
+      const groups = new Map<string, { boardId: string | null; boardName: string; count: number }>()
+      for (const row of filteredReworkRows) {
+        const key = row.boardId ?? row.boardName
+        const group = groups.get(key) ?? { boardId: row.boardId, boardName: row.boardName, count: 0 }
+        group.count += 1
+        groups.set(key, group)
+      }
+      return Array.from(groups.values()).sort((left, right) => right.count - left.count)
+    },
+    [dashboard?.requirementReworksByBoard, streamBoardId, boards, reworkDateFrom, reworkDateTo, filteredReworkRows],
   )
 
   const loadMetrics = useCallback(async (rebuildMart = false) => {
@@ -307,8 +379,8 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     'streams-count': dashboard?.totals.streams ?? null,
     'release-shipment': shippedTotal,
     'release-progress': releaseProgressPoints.length,
-    'analysis-stay': analysisStayRows.length,
-    'test-rework': reworkRows.length,
+    'analysis-stay': filteredAnalysisStayRows.length,
+    'test-rework': filteredReworkRows.length,
   }
 
   const streamBoardPicker = (
@@ -361,22 +433,53 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     }
     if (kind === 'analysis-chart') {
       const avg =
-        analysisStayRows.length > 0
-          ? Math.round((analysisStayRows.reduce((acc, row) => acc + row.daysInAnalysis, 0) / analysisStayRows.length) * 10) / 10
+        filteredAnalysisStayRows.length > 0
+          ? Math.round((filteredAnalysisStayRows.reduce((acc, row) => acc + row.daysInAnalysis, 0) / filteredAnalysisStayRows.length) * 10) / 10
           : 0
+      const hasAnalysisDateFilter = Boolean(analysisDateFrom || analysisDateTo)
       return (
         <div className="metrics-widget-body metrics-widget-body-chart">
           <p className="metrics-widget-chart-summary metrics-widget-no-drag">
             {loading
               ? '…'
-              : `${streamBoardName}: ${analysisStayRows.length.toLocaleString('ru-RU')} ЗНИ в анализе · среднее ${avg.toLocaleString('ru-RU')} дн.`}
+              : `${streamBoardName}: ${filteredAnalysisStayRows.length.toLocaleString('ru-RU')} ЗНИ в анализе · среднее ${avg.toLocaleString('ru-RU')} дн.`}
           </p>
           <div className="metrics-widget-actions metrics-widget-no-drag">
+            <label className="metrics-date-filter">
+              <span>с</span>
+              <input
+                type="date"
+                value={analysisDateFrom}
+                max={analysisDateTo || undefined}
+                onChange={(event) => setAnalysisDateFrom(event.target.value)}
+              />
+            </label>
+            <label className="metrics-date-filter">
+              <span>по</span>
+              <input
+                type="date"
+                value={analysisDateTo}
+                min={analysisDateFrom || undefined}
+                onChange={(event) => setAnalysisDateTo(event.target.value)}
+              />
+            </label>
+            {hasAnalysisDateFilter ? (
+              <button
+                type="button"
+                className="metrics-widget-export metrics-widget-export-secondary"
+                onClick={() => {
+                  setAnalysisDateFrom('')
+                  setAnalysisDateTo('')
+                }}
+              >
+                Сбросить
+              </button>
+            ) : null}
             <button
               type="button"
               className="metrics-widget-export"
-              disabled={loading || analysisStayRows.length === 0}
-              onClick={() => downloadAnalysisCsv(analysisStayRows)}
+              disabled={loading || filteredAnalysisStayRows.length === 0}
+              onClick={() => downloadAnalysisCsv(filteredAnalysisStayRows)}
             >
               Выгрузить CSV
             </button>
@@ -394,19 +497,50 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
       )
     }
     if (kind === 'rework-chart') {
+      const hasReworkDateFilter = Boolean(reworkDateFrom || reworkDateTo)
       return (
         <div className="metrics-widget-body metrics-widget-body-chart">
           <p className="metrics-widget-chart-summary metrics-widget-no-drag">
             {loading
               ? '…'
-              : `${streamBoardName}: ${reworkRows.length.toLocaleString('ru-RU')} требований сейчас в Develop`}
+              : `${streamBoardName}: ${filteredReworkRows.length.toLocaleString('ru-RU')} требований сейчас в Develop`}
           </p>
           <div className="metrics-widget-actions metrics-widget-no-drag">
+            <label className="metrics-date-filter">
+              <span>с</span>
+              <input
+                type="date"
+                value={reworkDateFrom}
+                max={reworkDateTo || undefined}
+                onChange={(event) => setReworkDateFrom(event.target.value)}
+              />
+            </label>
+            <label className="metrics-date-filter">
+              <span>по</span>
+              <input
+                type="date"
+                value={reworkDateTo}
+                min={reworkDateFrom || undefined}
+                onChange={(event) => setReworkDateTo(event.target.value)}
+              />
+            </label>
+            {hasReworkDateFilter ? (
+              <button
+                type="button"
+                className="metrics-widget-export metrics-widget-export-secondary"
+                onClick={() => {
+                  setReworkDateFrom('')
+                  setReworkDateTo('')
+                }}
+              >
+                Сбросить
+              </button>
+            ) : null}
             <button
               type="button"
               className="metrics-widget-export"
-              disabled={loading || reworkRows.length === 0}
-              onClick={() => downloadReworkCsv(reworkRows)}
+              disabled={loading || filteredReworkRows.length === 0}
+              onClick={() => downloadReworkCsv(filteredReworkRows)}
             >
               Выгрузить CSV
             </button>
