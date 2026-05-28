@@ -205,12 +205,13 @@ def refresh_metrics_shipments(
         if label:
             release_labels.append(label)
 
-    counts: dict[tuple[str | None, str, str], int] = {}
-    without_release = 0
+    # closed_req: closed requirements per (board, release)
+    # total_req:  ALL requirements (any state) per (board, release) — green line
+    closed_req_counts: dict[tuple[str | None, str, str], int] = {}
+    total_req_counts: dict[tuple[str | None, str, str], int] = {}
+    req_by_id: dict[int, WorkItem] = {req.id: req for req in requirements}
 
     for req in requirements:
-        if not is_requirement_closed(req.state, _kanban_column(req.fields)):
-            continue
         parent = parent_by_id.get(req.parent_id) if req.parent_id else None
         parent_fields = parent.fields if parent else {}
         area_path = parent.area_path if parent else None
@@ -220,27 +221,73 @@ def refresh_metrics_shipments(
             area_path,
             board_by_id,
         )
-
         release = assign_shipment_release(req.fields or {}, parent_fields or {})
-        if not release:
-            without_release += 1
+        if release:
+            key = (board_id, board_name, release)
+            total_req_counts[key] = total_req_counts.get(key, 0) + 1
+            if is_requirement_closed(req.state, _kanban_column(req.fields)):
+                closed_req_counts[key] = closed_req_counts.get(key, 0) + 1
+        elif is_requirement_closed(req.state, _kanban_column(req.fields)):
             key = (board_id, board_name, "Без релиза")
-            counts[key] = counts.get(key, 0) + 1
+            closed_req_counts[key] = closed_req_counts.get(key, 0) + 1
+
+    # closed errors per (board, release) — red line
+    error_parent_ids = list(dict.fromkeys([*parent_ids, *list(req_by_id.keys())]))
+    errors: list[WorkItem] = []
+    if error_parent_ids:
+        errors = (
+            db.query(WorkItem)
+            .filter(
+                WorkItem.work_item_type.in_(settings.error_type_list),
+                WorkItem.parent_id.in_(error_parent_ids),
+            )
+            .all()
+        )
+
+    closed_error_counts: dict[tuple[str | None, str, str], int] = {}
+    for error in errors:
+        if not is_requirement_closed(error.state, _kanban_column(error.fields)):
             continue
-        key = (board_id, board_name, release)
-        counts[key] = counts.get(key, 0) + 1
+        if not error.parent_id:
+            continue
+        if error.parent_id in req_by_id:
+            # Ошибка привязана к требованию
+            req_parent = req_by_id[error.parent_id]
+            zni = parent_by_id.get(req_parent.parent_id) if req_parent.parent_id else None
+            release = assign_shipment_release(req_parent.fields or {}, zni.fields if zni else {})
+            area_path = zni.area_path if zni else None
+            b_id = _board_key(zni.board_id if zni else None, area_path)
+            b_name = _board_display_name(zni.board_id if zni else None, area_path, board_by_id)
+        elif error.parent_id in parent_by_id:
+            # Ошибка привязана напрямую к ЗНИ
+            zni = parent_by_id[error.parent_id]
+            release = assign_shipment_release({}, zni.fields or {})
+            area_path = zni.area_path
+            b_id = _board_key(zni.board_id, area_path)
+            b_name = _board_display_name(zni.board_id, area_path, board_by_id)
+        else:
+            continue
+        if not release:
+            continue
+        key = (b_id, b_name, release)
+        closed_error_counts[key] = closed_error_counts.get(key, 0) + 1
+
+    all_keys = set(closed_req_counts.keys()) | set(total_req_counts.keys()) | set(closed_error_counts.keys())
 
     db.execute(delete(MetricsShipment))
     rows: list[MetricsShipment] = []
-    for (board_id, board_name, release_label), count in counts.items():
-        release_date = parse_release_date_from_label(release_label) if release_label != "Closed без даты" else None
+    for key in all_keys:
+        b_id, b_name, release_label = key
+        release_date = parse_release_date_from_label(release_label) if release_label not in ("Closed без даты", "Без релиза") else None
         rows.append(
             MetricsShipment(
-                board_id=board_id,
-                board_name=board_name,
+                board_id=b_id,
+                board_name=b_name,
                 release_label=release_label,
                 release_date=release_date,
-                shipment_count=count,
+                shipment_count=closed_req_counts.get(key, 0),
+                req_total=total_req_counts.get(key, 0),
+                error_count=closed_error_counts.get(key, 0),
                 period_from=period_from,
                 period_to=period_to,
                 built_at=built_at,
@@ -317,6 +364,8 @@ def load_metrics_dashboard(
             "release_label": row.release_label,
             "release_date": row.release_date.isoformat() if row.release_date else None,
             "count": row.shipment_count,
+            "req_total": row.req_total,
+            "error_count": row.error_count,
         }
         for row in facts
     ]

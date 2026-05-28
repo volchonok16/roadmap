@@ -17,60 +17,63 @@ describe('releasesForHistogram', () => {
   })
 })
 
+const makeShipment = (
+  boardId: string,
+  boardName: string,
+  releaseLabel: string,
+  releaseDate: string,
+  count: number,
+  reqTotal = 0,
+  errorCount = 0,
+) => ({ boardId, boardName, releaseLabel, releaseDate, count, reqTotal, errorCount })
+
 describe('buildHistogramFromShipments', () => {
-  it('builds series for selected board from pre-aggregated shipments', () => {
+  it('builds multi-series for selected board from pre-aggregated shipments', () => {
     const releases = [
       { label: '2026.06.02.0-R', date: '2026-06-02' },
       { label: '2026.06.16.0-R', date: '2026-06-16' },
     ]
     const shipments = [
-      {
-        boardId: 'a',
-        boardName: 'Service',
-        releaseLabel: '2026.06.02.0-R',
-        releaseDate: '2026-06-02',
-        count: 3,
-      },
-      {
-        boardId: 'a',
-        boardName: 'Service',
-        releaseLabel: '2026.06.16.0-R',
-        releaseDate: '2026-06-16',
-        count: 5,
-      },
+      makeShipment('a', 'Service', '2026.06.02.0-R', '2026-06-02', 3, 7, 1),
+      makeShipment('a', 'Service', '2026.06.16.0-R', '2026-06-16', 5, 12, 2),
     ]
-    const series = buildHistogramFromShipments(shipments, releases, {
+    const data = buildHistogramFromShipments(shipments, releases, {
       includeEmptyBars: true,
       today: new Date(2026, 5, 30),
     })
-    expect(series.find((row) => row.label === '2026.06.16.0-R')?.value).toBe(5)
+    const point = data.points.find((p) => p.label === '2026.06.16.0-R')
+    expect(point?.shipped).toBe(5)
+    expect(point?.total).toBe(12)
+    expect(point?.errors).toBe(2)
   })
 
-  it('shows next release with zero count when includeEmptyBars is false', () => {
+  it('shows next release with zero when includeEmptyBars is false', () => {
     const today = new Date(2026, 4, 26)
     const releases = [
       { label: '2026.05.21.0-R', date: '2026-05-21' },
       { label: '2026.06.02.0-R', date: '2026-06-02' },
       { label: '2026.06.16.0-R', date: '2026-06-16' },
     ]
-    const shipments = [
-      {
-        boardId: 'a',
-        boardName: 'Service',
-        releaseLabel: '2026.05.21.0-R',
-        releaseDate: '2026-05-21',
-        count: 10,
-      },
-    ]
-    const series = buildHistogramFromShipments(shipments, releases, {
+    const shipments = [makeShipment('a', 'Service', '2026.05.21.0-R', '2026-05-21', 10, 15, 3)]
+    const data = buildHistogramFromShipments(shipments, releases, {
       includeEmptyBars: false,
       today,
     })
-    expect(series.find((row) => row.label === '2026.06.02.0-R')).toEqual({
-      label: '2026.06.02.0-R',
-      value: 0,
-      sortKey: new Date('2026-06-02').getTime(),
-    })
-    expect(series.some((row) => row.label === '2026.06.16.0-R')).toBe(false)
+    const next = data.points.find((p) => p.label === '2026.06.02.0-R')
+    expect(next).toBeDefined()
+    expect(next?.shipped).toBe(0)
+    expect(next?.total).toBe(0)
+    expect(data.points.some((p) => p.label === '2026.06.16.0-R')).toBe(false)
+  })
+
+  it('collects withoutRelease from "Без релиза" rows', () => {
+    const releases = [{ label: '2026.06.02.0-R', date: '2026-06-02' }]
+    const shipments = [
+      makeShipment('a', 'S', '2026.06.02.0-R', '2026-06-02', 3, 5, 1),
+      makeShipment('a', 'S', 'Без релиза', '', 4, 0, 2),
+    ]
+    const data = buildHistogramFromShipments(shipments, releases, { today: new Date(2026, 5, 30) })
+    expect(data.withoutRelease.shipped).toBe(4)
+    expect(data.withoutRelease.errors).toBe(2)
   })
 })

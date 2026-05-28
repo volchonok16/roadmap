@@ -116,6 +116,10 @@ class MetricsShipment(Base):
     release_label: Mapped[str] = mapped_column(String(128), index=True)
     release_date: Mapped[date | None] = mapped_column(Date, index=True)
     shipment_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Количество требований ЛЮБОГО статуса, привязанных к этому релизу (зелёная линия).
+    req_total: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Количество закрытых ошибок, привязанных к этому релизу (красная линия).
+    error_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     period_from: Mapped[date] = mapped_column(Date, index=True)
     period_to: Mapped[date] = mapped_column(Date, index=True)
     built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

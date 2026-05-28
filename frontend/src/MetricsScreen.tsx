@@ -79,6 +79,14 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     [streamShipments, dashboard?.releases],
   )
 
+  const shippedTotalFromHistogram = useMemo(
+    () =>
+      releaseHistogram.points
+        .filter((p) => p.label !== 'Без релиза' && p.label !== 'Closed без даты')
+        .reduce((acc, p) => acc + p.shipped, 0) + releaseHistogram.withoutRelease.shipped,
+    [releaseHistogram],
+  )
+
   const loadMetrics = useCallback(async (rebuildMart = false) => {
     setLoading(true)
     setError(null)
@@ -190,9 +198,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const streamBoardName =
     streamBoardId ? boards.find((board) => board.id === streamBoardId)?.name ?? 'Доска' : 'Все доски'
 
-  const shippedTotal = releaseHistogram
-    .filter((row) => row.label !== 'Без релиза' && row.label !== 'Closed без даты')
-    .reduce((acc, row) => acc + row.value, 0)
+  const shippedTotal = shippedTotalFromHistogram
   const requirementsCount = dashboard?.totals.requirementsCount ?? 0
   const errorsCount = dashboard?.totals.errorsCount ?? 0
   const totalTasksCount = dashboard?.totals.totalTasksCount ?? requirementsCount + errorsCount
@@ -224,7 +230,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         <p className="metrics-widget-chart-summary metrics-widget-no-drag">
           {loading
             ? '…'
-            : `${streamBoardName}: ${shippedTotal.toLocaleString('ru-RU')} отгружено по ${releaseHistogram.length} релизам`}
+            : `${streamBoardName}: ${shippedTotal.toLocaleString('ru-RU')} отгружено по ${releaseHistogram.points.length} релизам`}
           {dashboard?.cacheBuiltAt
             ? ` · витрина ${new Date(dashboard.cacheBuiltAt).toLocaleString('ru-RU')}`
             : ''}
@@ -242,7 +248,7 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
         </div>
         <MetricsReleaseChart
           chartType={releaseChartType}
-          series={releaseHistogram}
+          data={releaseHistogram}
           loading={loading}
           emptyLabel={
             streamBoardId

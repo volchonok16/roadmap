@@ -1,4 +1,3 @@
-import type { MetricBarPoint } from './metricsCharts'
 import { shortReleaseLabel } from './metricsCharts'
 
 export type MetricsDashboardBoard = {
@@ -17,6 +16,8 @@ export type MetricsDashboardShipment = {
   releaseLabel: string
   releaseDate: string | null
   count: number
+  reqTotal: number
+  errorCount: number
 }
 
 export type MetricsDashboard = {
@@ -36,6 +37,21 @@ export type MetricsDashboard = {
   periodTo: string
   generatedAt: string
   cacheBuiltAt: string | null
+}
+
+/** Мульти-серийная точка гистограммы: одна точка = один релиз, 3 значения. */
+export type MetricMultiBarPoint = {
+  label: string
+  sortKey: number
+  shipped: number  // синяя: закрытые требования
+  total: number    // зелёная: все требования с этим релизом
+  errors: number   // красная: закрытые ошибки
+}
+
+/** Данные для мульти-серийного графика отгрузки по релизам. */
+export type ReleaseHistogramData = {
+  points: MetricMultiBarPoint[]  // основная ось (без «Без релиза»)
+  withoutRelease: { shipped: number; total: number; errors: number }
 }
 
 function startOfDay(date: Date) {
@@ -95,43 +111,47 @@ export function buildHistogramFromShipments(
   shipments: MetricsDashboardShipment[],
   releases: MetricsDashboardRelease[],
   options: { includeEmptyBars?: boolean; maxBars?: number; today?: Date } = {},
-): MetricBarPoint[] {
-  const maxBars = options.maxBars ?? 16
+): ReleaseHistogramData {
+  const maxBars = options.maxBars ?? 24
   const includeEmptyBars = options.includeEmptyBars ?? true
   const today = options.today ?? new Date()
   const chartReleases = releasesForHistogram(releases, today)
   const nextReleaseLabel = nextUpcomingRelease(releases, today)?.label ?? null
 
-  const counts = new Map<string, number>()
+  const shipped = new Map<string, number>()
+  const total = new Map<string, number>()
+  const errors = new Map<string, number>()
+
   for (const row of shipments) {
-    counts.set(row.releaseLabel, (counts.get(row.releaseLabel) ?? 0) + row.count)
+    if (row.releaseLabel === 'Без релиза') continue
+    shipped.set(row.releaseLabel, (shipped.get(row.releaseLabel) ?? 0) + row.count)
+    total.set(row.releaseLabel, (total.get(row.releaseLabel) ?? 0) + row.reqTotal)
+    errors.set(row.releaseLabel, (errors.get(row.releaseLabel) ?? 0) + row.errorCount)
   }
 
-  const ordered = chartReleases
-    .map((release) => ({
-      label: release.label,
-      value: counts.get(release.label) ?? 0,
-      sortKey: release.date ? new Date(release.date).getTime() : Number.MAX_SAFE_INTEGER,
-    }))
-    .sort((left, right) => left.sortKey - right.sortKey)
+  let ordered: MetricMultiBarPoint[] = chartReleases.map((release) => ({
+    label: release.label,
+    sortKey: release.date ? new Date(release.date).getTime() : Number.MAX_SAFE_INTEGER,
+    shipped: shipped.get(release.label) ?? 0,
+    total: total.get(release.label) ?? 0,
+    errors: errors.get(release.label) ?? 0,
+  }))
 
-  let series = includeEmptyBars
-    ? ordered
-    : ordered.filter((row) => row.value > 0 || row.label === nextReleaseLabel)
-  series = series.slice(-maxBars)
+  if (!includeEmptyBars) {
+    ordered = ordered.filter(
+      (row) => row.shipped > 0 || row.total > 0 || row.errors > 0 || row.label === nextReleaseLabel,
+    )
+  }
+  ordered = ordered.slice(-maxBars)
 
-  const withoutRelease = shipments
-    .filter((row) => row.releaseLabel === 'Без релиза')
-    .reduce((acc, row) => acc + row.count, 0)
-  if (withoutRelease > 0) {
-    series.push({
-      label: 'Без релиза',
-      value: withoutRelease,
-      sortKey: Number.MAX_SAFE_INTEGER - 1,
-    })
+  const noRelease = shipments.filter((row) => row.releaseLabel === 'Без релиза')
+  const withoutRelease = {
+    shipped: noRelease.reduce((acc, row) => acc + row.count, 0),
+    total: noRelease.reduce((acc, row) => acc + row.reqTotal, 0),
+    errors: noRelease.reduce((acc, row) => acc + row.errorCount, 0),
   }
 
-  return series
+  return { points: ordered, withoutRelease }
 }
 
 export function formatReleaseFromDashboard(label: string) {

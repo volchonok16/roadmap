@@ -85,6 +85,8 @@ class MetricsShipmentOut(ApiModel):
     release_label: str
     release_date: str | None = None
     count: int
+    req_total: int = 0
+    error_count: int = 0
 
 
 class MetricsTotalsOut(ApiModel):
