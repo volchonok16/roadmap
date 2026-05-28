@@ -137,8 +137,6 @@ class WorkItemColumnTransition(Base):
             "to_column",
             name="uq_work_item_column_transition",
         ),
-        Index("ix_work_item_column_transitions_work_item", "work_item_id"),
-        Index("ix_work_item_column_transitions_changed_at", "changed_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
