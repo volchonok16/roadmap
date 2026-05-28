@@ -521,24 +521,28 @@ async def metrics_dashboard(
 @app.get("/api/roadmap", response_model=RoadmapOut)
 def roadmap(
     board_id: list[str] = Query(default=[]),
-    date_from: date = Query(alias="from"),
-    date_to: date = Query(alias="to"),
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    include_all: bool = Query(default=False),
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
     db: Session = Depends(get_db),
 ) -> RoadmapOut:
     tfs_auth = get_session(x_session_id)
     boards_rows = db.query(Board).order_by(Board.name).all()
 
-    query = db.query(WorkItem).filter(
-        WorkItem.work_item_type == "Запрос на изменение",
-        WorkItem.start_date.is_not(None),
-        WorkItem.target_date.is_not(None),
-        or_(
-            and_(WorkItem.start_date >= date_from, WorkItem.start_date <= date_to),
-            and_(WorkItem.target_date >= date_from, WorkItem.target_date <= date_to),
-            and_(WorkItem.start_date <= date_from, WorkItem.target_date >= date_to),
-        ),
-    )
+    query = db.query(WorkItem).filter(WorkItem.work_item_type == "Запрос на изменение")
+    if not include_all:
+        if date_from is None or date_to is None:
+            raise HTTPException(status_code=400, detail="Параметры from и to обязательны")
+        query = query.filter(
+            WorkItem.start_date.is_not(None),
+            WorkItem.target_date.is_not(None),
+            or_(
+                and_(WorkItem.start_date >= date_from, WorkItem.start_date <= date_to),
+                and_(WorkItem.target_date >= date_from, WorkItem.target_date <= date_to),
+                and_(WorkItem.start_date <= date_from, WorkItem.target_date >= date_to),
+            ),
+        )
     query = apply_board_scope(query, board_id or None)
 
     change_rows = query.order_by(WorkItem.start_date, WorkItem.id).all()
@@ -601,6 +605,7 @@ def roadmap(
 
     boards_for_client = merge_board_catalog(boards_rows, change_rows)
     board_by_id = {board.id: board for board in boards_for_client}
+    timeline_anchor = date_from or datetime.now(UTC).date()
     items = [
         ChangeRequestOut(
             id=row.id,
@@ -619,14 +624,13 @@ def roadmap(
             assignee=row.assigned_to_name,
             assignee_avatar_url=row.assigned_to_avatar_url,
             tfs_url=work_item_url(row, tfs_auth),
-            start_date=row.start_date,
-            target_date=row.target_date,
+            start_date=row.start_date or row.target_date or timeline_anchor,
+            target_date=row.target_date or row.start_date or timeline_anchor,
             user_start_date=user_start_date_from_fields(row.fields or {}),
             requirements=requirements_by_parent.get(row.id, []),
             errors=errors_by_parent.get(row.id, []),
         )
         for row in change_rows
-        if row.start_date and row.target_date
     ]
 
     return RoadmapOut(

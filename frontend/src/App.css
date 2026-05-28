@@ -2407,6 +2407,28 @@ body.zni-schedule-drag[data-zni-drag-mode='resize-end'] {
   background: #fff;
 }
 
+.task-list-row.active {
+  position: relative;
+  box-shadow:
+    0 0 0 1px rgba(248, 210, 72, 0.55),
+    0 6px 16px rgba(20, 30, 48, 0.1);
+}
+
+.task-list-row.active::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 999px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(248, 210, 72, 0.95) 0 6px,
+    rgba(248, 210, 72, 0) 6px 11px
+  );
+}
+
 .task-list-row-top {
   display: flex;
   align-items: center;
@@ -2880,6 +2902,24 @@ h2 {
 .roadmap-row.active .row-track {
   outline: 2px solid var(--accent-soft);
   outline-offset: 2px;
+}
+
+.roadmap-row.active .row-track::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  border-radius: 999px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(248, 210, 72, 0.92) 0 6px,
+    rgba(248, 210, 72, 0) 6px 11px
+  );
+  box-shadow: 0 0 8px rgba(248, 210, 72, 0.32);
+  z-index: 3;
+  pointer-events: none;
 }
 
 .bar-req {

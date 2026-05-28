@@ -860,6 +860,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     setError(null)
     try {
       const params = new URLSearchParams({ from, to })
+      if (scale === 'all') params.set('include_all', 'true')
       for (const id of selectedBoardIds) params.append('board_id', id)
       const roadmap = await getJson<RoadmapResponse>(`/api/roadmap?${params}`)
       setData({ ...roadmap, items: normalizeRoadmapItems(roadmap.items ?? []) })
@@ -879,11 +880,11 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
 
   useEffect(() => {
     void loadRoadmap()
-  }, [selectedBoardIds, from, to])
+  }, [selectedBoardIds, from, to, scale])
 
   const applyPeriodForScale = useCallback(
     (nextScale: Scale, year: number, quarter: number, month: number) => {
-      if (nextScale === 'custom') return
+      if (nextScale === 'custom' || nextScale === 'all') return
       if (nextScale === 'year') {
         setFrom(`${year}-01-01`)
         setTo(`${year}-12-31`)
@@ -1086,7 +1087,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
     toDate,
   ])
   const canPanTimeline =
-    scale === 'quarter' || scale === 'month' || scale === 'week' || scale === 'custom'
+    scale === 'quarter' || scale === 'month' || scale === 'week' || scale === 'custom' || scale === 'all'
   const totalItems = data?.items
   const startDateScopedItems = useMemo(() => {
     const items = totalItems ?? []

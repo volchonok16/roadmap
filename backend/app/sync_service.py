@@ -610,10 +610,27 @@ async def run_sync(
         touch_sync_progress(db, sync_run, f"Загрузка связей ({len(parent_map)} элементов)…")
         close_db_session(db)
         db = None  # type: ignore[assignment]
-        requirement_items = await client.get_work_items_batch(sorted(parent_map.keys()))
-        await client.enrich_scheduling_fields(requirement_items)
+        linked_ids = sorted(parent_map.keys())
+        total_linked = len(linked_ids)
+        requirement_items: list[dict[str, Any]] = []
+        linked_chunk = max(500, settings.tfs_batch_size * 20)
+        for offset in range(0, total_linked, linked_chunk):
+            chunk_ids = linked_ids[offset : offset + linked_chunk]
+            chunk_items = await client.get_work_items_batch(chunk_ids)
+            await client.enrich_scheduling_fields(chunk_items)
+            requirement_items.extend(chunk_items)
+            processed = min(offset + len(chunk_ids), total_linked)
+            if processed == total_linked or processed % max(linked_chunk * 2, 1000) == 0:
+                db, sync_run = open_db()
+                touch_sync_progress(
+                    db,
+                    sync_run,
+                    f"Загрузка связей: {processed}/{total_linked}",
+                )
+                close_db_session(db)
+                db = None  # type: ignore[assignment]
         db, sync_run = open_db()
-        save_raw_payload(db, sync_run_id, "linked_items_batch", {"ids": sorted(parent_map.keys()), "items": requirement_items})
+        save_raw_payload(db, sync_run_id, "linked_items_batch", {"ids": linked_ids, "items": requirement_items})
         saved_requirements = 0
         saved_linked_items = 0
         requirement_payloads: list[dict[str, Any]] = []

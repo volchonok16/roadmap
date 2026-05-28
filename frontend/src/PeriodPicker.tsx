@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import FilterDropdown from './FilterDropdown'
 import { useFloatingMenuStyle } from './useFloatingMenu'
 
-export type PeriodScale = 'year' | 'quarter' | 'month' | 'week' | 'custom'
+export type PeriodScale = 'year' | 'quarter' | 'month' | 'week' | 'custom' | 'all'
 
 type PeriodPickerProps = {
   scale: PeriodScale
@@ -26,6 +26,7 @@ const modeLabels: Record<PeriodScale, string> = {
   month: 'Месяц',
   week: 'Неделя',
   custom: 'Свободный формат',
+  all: 'Без плана',
 }
 
 const monthShort = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
@@ -49,6 +50,7 @@ export function formatPeriodTriggerLabel(
   if (scale === 'quarter') return `Q${quarter} ${year} · ${range}`
   if (scale === 'month') return `${monthShort[month - 1] ?? month} ${year} · ${range}`
   if (scale === 'week') return `Неделя · ${range}`
+  if (scale === 'all') return `Без плана · ${range}`
   return range
 }
 
@@ -129,7 +131,7 @@ export default function PeriodPicker({
     >
       <p className="period-picker-title">Период</p>
       <div className="period-mode-switch" role="group" aria-label="Тип периода">
-        {(['year', 'quarter', 'month', 'week', 'custom'] as PeriodScale[]).map((item) => (
+        {(['year', 'quarter', 'month', 'week', 'custom', 'all'] as PeriodScale[]).map((item) => (
           <button
             key={item}
             type="button"
@@ -143,7 +145,7 @@ export default function PeriodPicker({
       </div>
 
       <div className="period-picker-body">
-        {scale !== 'custom' && scale !== 'week' && (
+        {scale !== 'custom' && scale !== 'week' && scale !== 'all' && (
           <div className="period-picker-field">
             <span className="period-picker-field-label">Год</span>
             <FilterDropdown
@@ -200,6 +202,12 @@ export default function PeriodPicker({
 
         {scale === 'week' && (
           <p className="period-picker-hint">Текущая календарная неделя (пн — вс).</p>
+        )}
+
+        {scale === 'all' && (
+          <p className="period-picker-hint">
+            Показывать все ЗНИ/требования по выбранной доске без фильтра по датам.
+          </p>
         )}
 
         {scale === 'custom' && (
