@@ -753,7 +753,11 @@ async def run_sync(
         saved_linked_items = 0
         requirement_payloads: list[dict[str, Any]] = []
         valid_parent_ids = existing_work_item_ids(db, set(parent_map.values()))
-        for item in as_work_item_list(requirement_items):
+        linked_items_to_save = as_work_item_list(requirement_items)
+        total_to_save = len(linked_items_to_save)
+        touch_sync_progress(db, sync_run, f"Сохранение связей: 0/{total_to_save}")
+        save_batch_size = 1000
+        for index, item in enumerate(linked_items_to_save, start=1):
             fields = item.get("fields") or {}
             parent_id = parent_map.get(item["id"])
             if parent_id not in valid_parent_ids:
@@ -773,7 +777,10 @@ async def run_sync(
                 upsert_requirement(db, payload)
                 saved_requirements += 1
                 requirement_payloads.append(payload)
-        db.commit()
+            if index % save_batch_size == 0 or index == total_to_save:
+                sync_run.message = f"Сохранение связей: {index}/{total_to_save}"
+                db.add(sync_run)
+                db.commit()
 
         zni_ids = {payload["id"] for payload in change_payloads}
         requirement_ids = {payload["id"] for payload in requirement_payloads}
@@ -788,7 +795,10 @@ async def run_sync(
             db, sync_run = open_db()
             save_raw_payload(db, sync_run_id, "linked_errors_batch", {"ids": error_ids_to_fetch, "items": error_items})
             valid_error_parent_ids = existing_work_item_ids(db, set(error_parent_map.values()))
-            for item in as_work_item_list(error_items):
+            error_items_to_save = as_work_item_list(error_items)
+            total_errors_to_save = len(error_items_to_save)
+            touch_sync_progress(db, sync_run, f"Сохранение ошибок: 0/{total_errors_to_save}")
+            for index, item in enumerate(error_items_to_save, start=1):
                 fields = item.get("fields") or {}
                 if not is_error_work_item_type(str(fields.get("System.WorkItemType") or "")):
                     continue
@@ -810,7 +820,12 @@ async def run_sync(
                 for relation in as_relation_list(payload.get("relations")):
                     upsert_relation(db, payload["id"], relation)
                 saved_linked_items += 1
-            db.commit()
+                if index % save_batch_size == 0 or index == total_errors_to_save:
+                    sync_run.message = f"Сохранение ошибок: {index}/{total_errors_to_save}"
+                    db.add(sync_run)
+                    db.commit()
+            if total_errors_to_save == 0:
+                db.commit()
 
         sync_run.status = "success"
         boards_count = len(team_boards) if team_boards else len(board_catalog)
