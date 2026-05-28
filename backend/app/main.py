@@ -86,7 +86,7 @@ def startup() -> None:
             raise
     db = SessionLocal()
     try:
-        fail_stale_running_syncs(db, max_age_minutes=0)
+        fail_stale_running_syncs(db, max_age_minutes=settings.sync_stale_running_minutes)
     finally:
         db.close()
 

@@ -1044,10 +1044,28 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const today = startOfLocalDay()
   const todayLeft = progressLeft(today, fromDate, toDate)
   const isTodayVisible = today >= fromDate && today <= toDate
-  const selectedZniTimelineMarker = useMemo(() => {
+  const selectedTimelineMarker = useMemo(() => {
     if (!selectedItemId || !data?.items?.length) return null
     const selected = data.items.find((item) => item.id === selectedItemId)
     if (!selected) return null
+
+    if (selectedRequirementId && requirementSortAxes.byDate) {
+      const requirement = selected.requirements.find((item) => item.id === selectedRequirementId)
+      if (requirement) {
+        const effective = effectiveRequirementScheduling(
+          requirement,
+          selected,
+          schedulingOverrides[selected.id],
+          schedulingOverrides[requirement.id],
+          useUserStartDate,
+        )
+        return {
+          startLeft: progressLeft(effective.startDate, fromDate, toDate),
+          targetLeft: progressLeft(effective.targetDate, fromDate, toDate),
+        }
+      }
+    }
+
     const effective = effectiveScheduling(
       selected,
       schedulingOverrides[selected.id],
@@ -1057,7 +1075,16 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
       startLeft: progressLeft(effective.startDate, fromDate, toDate),
       targetLeft: progressLeft(effective.targetDate, fromDate, toDate),
     }
-  }, [selectedItemId, data?.items, schedulingOverrides, useUserStartDate, fromDate, toDate])
+  }, [
+    selectedItemId,
+    selectedRequirementId,
+    requirementSortAxes.byDate,
+    data?.items,
+    schedulingOverrides,
+    useUserStartDate,
+    fromDate,
+    toDate,
+  ])
   const canPanTimeline =
     scale === 'quarter' || scale === 'month' || scale === 'week' || scale === 'custom'
   const totalItems = data?.items
@@ -2044,8 +2071,8 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           isTodayVisible={isTodayVisible}
           todayLeft={todayLeft}
           releaseMarkers={visibleReleaseMarkers}
-          selectedStartLeft={selectedZniTimelineMarker?.startLeft ?? null}
-          selectedTargetLeft={selectedZniTimelineMarker?.targetLeft ?? null}
+          selectedStartLeft={selectedTimelineMarker?.startLeft ?? null}
+          selectedTargetLeft={selectedTimelineMarker?.targetLeft ?? null}
           showGroupHeaders={selectedBoardIds.length !== 1}
         />
       </section>
