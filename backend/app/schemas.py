@@ -89,6 +89,44 @@ class MetricsShipmentOut(ApiModel):
     error_count: int = 0
 
 
+class MetricsAnalysisStayOut(ApiModel):
+    board_id: str | None = None
+    board_name: str
+    item_id: int
+    title: str
+    state: str
+    column: str
+    area_path: str | None = None
+    changed_at: datetime | None = None
+    days_in_analysis: int
+
+
+class MetricsAnalysisBoardOut(ApiModel):
+    board_id: str | None = None
+    board_name: str
+    count: int = 0
+    avg_days: float = 0
+    max_days: int = 0
+
+
+class MetricsRequirementReworkOut(ApiModel):
+    board_id: str | None = None
+    board_name: str
+    item_id: int
+    parent_id: int | None = None
+    title: str
+    state: str
+    column: str
+    area_path: str | None = None
+    changed_at: datetime | None = None
+
+
+class MetricsRequirementReworkBoardOut(ApiModel):
+    board_id: str | None = None
+    board_name: str
+    count: int = 0
+
+
 class MetricsTotalsOut(ApiModel):
     streams: int = 0
     zni_count: int = 0
@@ -106,6 +144,10 @@ class MetricsDashboardOut(ApiModel):
     boards: list[BoardOut]
     releases: list[MetricsReleaseOut]
     shipments: list[MetricsShipmentOut]
+    analysis_stays: list[MetricsAnalysisStayOut] = Field(default_factory=list)
+    analysis_by_board: list[MetricsAnalysisBoardOut] = Field(default_factory=list)
+    requirement_reworks: list[MetricsRequirementReworkOut] = Field(default_factory=list)
+    requirement_reworks_by_board: list[MetricsRequirementReworkBoardOut] = Field(default_factory=list)
     totals: MetricsTotalsOut
     period_from: date
     period_to: date

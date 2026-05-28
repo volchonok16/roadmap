@@ -2414,6 +2414,10 @@ body.zni-schedule-drag[data-zni-drag-mode='resize-end'] {
     0 6px 16px rgba(20, 30, 48, 0.1);
 }
 
+.task-list-row-req.active {
+  border-left-color: rgba(248, 210, 72, 0.98);
+}
+
 .task-list-row.active::before {
   content: '';
   position: absolute;
@@ -2919,6 +2923,31 @@ h2 {
   );
   box-shadow: 0 0 8px rgba(248, 210, 72, 0.32);
   z-index: 3;
+  pointer-events: none;
+}
+
+.roadmap-row-req.active .bar-req {
+  box-shadow:
+    inset 4px 0 0 rgba(248, 210, 72, 0.98),
+    0 0 0 1px rgba(248, 210, 72, 0.48),
+    0 3px 12px rgba(61, 71, 86, 0.16);
+}
+
+.roadmap-row-req.active .bar-req::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 999px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(248, 210, 72, 0.98) 0 6px,
+    rgba(248, 210, 72, 0) 6px 11px
+  );
+  box-shadow: 0 0 8px rgba(248, 210, 72, 0.36);
+  z-index: 4;
   pointer-events: none;
 }
 
@@ -4296,6 +4325,71 @@ h2 {
 /* is-gray — для прогресс-виджета */
 .metrics-bar-chart-legend-item.is-gray .metrics-bar-chart-legend-dot {
   background: rgba(148, 163, 184, 0.6);
+}
+
+.metrics-bar-chart-legend-item.is-orange .metrics-bar-chart-legend-dot {
+  background: rgba(249, 115, 22, 0.84);
+}
+
+.metrics-bar-chart-legend-item.is-purple .metrics-bar-chart-legend-dot {
+  background: rgba(147, 51, 234, 0.82);
+}
+
+.metrics-analysis-chart .metrics-bar-chart-bar.is-orange {
+  background: linear-gradient(180deg, rgba(249, 115, 22, 0.9) 0%, rgba(249, 115, 22, 0.48) 100%);
+}
+
+.metrics-rework-chart .metrics-bar-chart-bar.is-purple {
+  background: linear-gradient(180deg, rgba(147, 51, 234, 0.9) 0%, rgba(147, 51, 234, 0.46) 100%);
+}
+
+.metrics-analysis-chart-col {
+  flex: 0 0 auto;
+  min-width: 54px;
+  max-width: 92px;
+}
+
+.metrics-rework-chart-col {
+  flex: 0 0 auto;
+  min-width: 54px;
+  max-width: 92px;
+}
+
+.metrics-analysis-chart-count {
+  margin-top: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(100, 116, 139, 0.95);
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics-widget-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: -2px 0 6px;
+}
+
+.metrics-widget-export {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: #fff;
+  color: #475569;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.metrics-widget-export:hover:not(:disabled) {
+  border-color: rgba(249, 115, 22, 0.55);
+  color: #c2410c;
+}
+
+.metrics-widget-export:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Progress Chart — стековые столбики */

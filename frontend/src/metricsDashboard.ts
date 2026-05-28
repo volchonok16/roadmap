@@ -20,10 +20,52 @@ export type MetricsDashboardShipment = {
   errorCount: number
 }
 
+export type MetricsAnalysisStay = {
+  boardId: string | null
+  boardName: string
+  itemId: number
+  title: string
+  state: string
+  column: string
+  areaPath: string | null
+  changedAt: string | null
+  daysInAnalysis: number
+}
+
+export type MetricsAnalysisBoard = {
+  boardId: string | null
+  boardName: string
+  count: number
+  avgDays: number
+  maxDays: number
+}
+
+export type MetricsRequirementRework = {
+  boardId: string | null
+  boardName: string
+  itemId: number
+  parentId: number | null
+  title: string
+  state: string
+  column: string
+  areaPath: string | null
+  changedAt: string | null
+}
+
+export type MetricsRequirementReworkBoard = {
+  boardId: string | null
+  boardName: string
+  count: number
+}
+
 export type MetricsDashboard = {
   boards: MetricsDashboardBoard[]
   releases: MetricsDashboardRelease[]
   shipments: MetricsDashboardShipment[]
+  analysisStays: MetricsAnalysisStay[]
+  analysisByBoard: MetricsAnalysisBoard[]
+  requirementReworks: MetricsRequirementRework[]
+  requirementReworksByBoard: MetricsRequirementReworkBoard[]
   totals: {
     streams: number
     zniCount: number
@@ -108,6 +150,49 @@ export function shipmentsForBoard(
     }
     return false
   })
+}
+
+function boardMatches(boardId: string | null, boardName: string, selectedBoardId: string | null, boards: MetricsDashboardBoard[]) {
+  if (!selectedBoardId) return true
+  const board = boards.find((item) => item.id === selectedBoardId)
+  if (boardId && boardId === selectedBoardId) return true
+  if (board && boardName === board.name) return true
+  if (selectedBoardId.startsWith('area:') && board) {
+    return boardId === selectedBoardId || boardName === board.name
+  }
+  return false
+}
+
+export function analysisStaysForBoard(
+  rows: MetricsAnalysisStay[],
+  boardId: string | null,
+  boards: MetricsDashboardBoard[] = [],
+) {
+  return rows.filter((row) => boardMatches(row.boardId, row.boardName, boardId, boards))
+}
+
+export function analysisBoardSummaryForBoard(
+  rows: MetricsAnalysisBoard[],
+  boardId: string | null,
+  boards: MetricsDashboardBoard[] = [],
+) {
+  return rows.filter((row) => boardMatches(row.boardId, row.boardName, boardId, boards))
+}
+
+export function requirementReworksForBoard(
+  rows: MetricsRequirementRework[],
+  boardId: string | null,
+  boards: MetricsDashboardBoard[] = [],
+) {
+  return rows.filter((row) => boardMatches(row.boardId, row.boardName, boardId, boards))
+}
+
+export function requirementReworkSummaryForBoard(
+  rows: MetricsRequirementReworkBoard[],
+  boardId: string | null,
+  boards: MetricsDashboardBoard[] = [],
+) {
+  return rows.filter((row) => boardMatches(row.boardId, row.boardName, boardId, boards))
 }
 
 export function buildHistogramFromShipments(

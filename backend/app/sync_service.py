@@ -277,6 +277,12 @@ def upsert_work_item(db: Session, payload: dict[str, Any]) -> None:
     db.execute(statement)
 
 
+def existing_work_item_ids(db: Session, ids: set[int]) -> set[int]:
+    if not ids:
+        return set()
+    return {row[0] for row in db.query(WorkItem.id).filter(WorkItem.id.in_(ids)).all()}
+
+
 def upsert_change_request(db: Session, payload: dict[str, Any]) -> None:
     statement = insert(ChangeRequest).values(
         id=payload["id"],
@@ -697,6 +703,28 @@ async def run_sync(
         # Добавляем compact-relations из обработанных payloads (могут содержать доп. связи)
         for child_id, parent_id in relation_parent_map(change_payloads).items():
             parent_map.setdefault(child_id, parent_id)
+        parent_ids_from_links = set(parent_map.values())
+        saved_parent_ids = {payload["id"] for payload in change_payloads}
+        missing_parent_ids = parent_ids_from_links - saved_parent_ids - existing_work_item_ids(db, parent_ids_from_links)
+        if missing_parent_ids:
+            raw_change_by_id = {item["id"]: item for item in as_work_item_list(change_items)}
+            logger.info(
+                "sync_missing_link_parents id=%s count=%s sample=%s",
+                sync_run_id,
+                len(missing_parent_ids),
+                sorted(missing_parent_ids)[:20],
+            )
+            for parent_id in sorted(missing_parent_ids):
+                raw_parent = raw_change_by_id.get(parent_id)
+                if not raw_parent:
+                    continue
+                parent_payload = item_payload(raw_parent, board_catalog, tfs_auth)
+                upsert_work_item(db, parent_payload)
+                if (raw_parent.get("fields") or {}).get("System.WorkItemType") in settings.change_type_list:
+                    upsert_change_request(db, parent_payload)
+                change_payloads.append(parent_payload)
+                saved_parent_ids.add(parent_payload["id"])
+            db.commit()
         touch_sync_progress(db, sync_run, f"Загрузка связей ({len(parent_map)} элементов)…")
         close_db_session(db)
         db = None  # type: ignore[assignment]
@@ -724,9 +752,19 @@ async def run_sync(
         saved_requirements = 0
         saved_linked_items = 0
         requirement_payloads: list[dict[str, Any]] = []
+        valid_parent_ids = existing_work_item_ids(db, set(parent_map.values()))
         for item in as_work_item_list(requirement_items):
             fields = item.get("fields") or {}
-            payload = item_payload(item, board_catalog, tfs_auth, parent_id=parent_map.get(item["id"]))
+            parent_id = parent_map.get(item["id"])
+            if parent_id not in valid_parent_ids:
+                logger.warning(
+                    "sync_link_parent_missing item_id=%s parent_id=%s type=%s",
+                    item.get("id"),
+                    parent_id,
+                    fields.get("System.WorkItemType"),
+                )
+                parent_id = None
+            payload = item_payload(item, board_catalog, tfs_auth, parent_id=parent_id)
             upsert_work_item(db, payload)
             saved_linked_items += 1
             for relation in as_relation_list(payload.get("relations")):
@@ -749,15 +787,24 @@ async def run_sync(
             error_items = await client.get_work_items_batch(error_ids_to_fetch)
             db, sync_run = open_db()
             save_raw_payload(db, sync_run_id, "linked_errors_batch", {"ids": error_ids_to_fetch, "items": error_items})
+            valid_error_parent_ids = existing_work_item_ids(db, set(error_parent_map.values()))
             for item in as_work_item_list(error_items):
                 fields = item.get("fields") or {}
                 if not is_error_work_item_type(str(fields.get("System.WorkItemType") or "")):
                     continue
+                parent_id = error_parent_map.get(item["id"])
+                if parent_id not in valid_error_parent_ids:
+                    logger.warning(
+                        "sync_error_parent_missing item_id=%s parent_id=%s",
+                        item.get("id"),
+                        parent_id,
+                    )
+                    parent_id = None
                 payload = item_payload(
                     item,
                     board_catalog,
                     tfs_auth,
-                    parent_id=error_parent_map.get(item["id"]),
+                    parent_id=parent_id,
                 )
                 upsert_work_item(db, payload)
                 for relation in as_relation_list(payload.get("relations")):

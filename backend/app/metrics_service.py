@@ -16,10 +16,28 @@ from app.requirement_status import is_requirement_closed
 
 # Минимальные наборы колонок для метрик — не грузим тяжёлые JSONB.
 _CHANGE_LO = load_only(WorkItem.id, WorkItem.board_id, WorkItem.area_path, WorkItem.fields)
+_ANALYSIS_CHANGE_LO = load_only(
+    WorkItem.id,
+    WorkItem.board_id,
+    WorkItem.title,
+    WorkItem.state,
+    WorkItem.area_path,
+    WorkItem.changed_date,
+    WorkItem.fields,
+)
+_REWORK_REQ_LO = load_only(
+    WorkItem.id,
+    WorkItem.parent_id,
+    WorkItem.title,
+    WorkItem.state,
+    WorkItem.changed_date,
+    WorkItem.fields,
+)
 _REQ_LO = load_only(WorkItem.id, WorkItem.parent_id, WorkItem.state, WorkItem.fields)
 _ERROR_LO = load_only(WorkItem.id, WorkItem.parent_id, WorkItem.state, WorkItem.fields)
 CHANGE_TYPE = "Запрос на изменение"
 REQUIREMENT_TYPE = "Требование"
+ANALYSIS_COLUMNS = ("Express Analysis", "Analysis Backlog", "Full Analysis", "Analysis")
 
 
 def _kanban_column(fields: dict[str, Any] | None) -> str | None:
@@ -29,6 +47,20 @@ def _kanban_column(fields: dict[str, Any] | None) -> str | None:
     if value in (None, ""):
         return None
     return str(value).strip()
+
+
+def _is_analysis_column(column: str | None) -> bool:
+    if not column:
+        return False
+    lower = column.strip().lower()
+    return any(part.lower() in lower for part in ANALYSIS_COLUMNS)
+
+
+def _is_development_column(column: str | None) -> bool:
+    if not column:
+        return False
+    lower = column.strip().lower()
+    return "develop" in lower or "development" in lower or "разработ" in lower
 
 
 def parse_release_date_from_label(label: str) -> date | None:
@@ -323,6 +355,7 @@ def load_metrics_dashboard(
     )
 
     boards_rows = db.query(Board).order_by(Board.name).all()
+    board_by_id = {row.id: row for row in boards_rows}
 
     # Используем только id — не грузим JSONB (24k ЗНИ × 20–100 KB = секунды ожидания).
     zni_count = (
@@ -378,6 +411,97 @@ def load_metrics_dashboard(
         for row in facts
     ]
 
+    now = datetime.now(UTC)
+    analysis_rows = (
+        db.query(WorkItem)
+        .options(_ANALYSIS_CHANGE_LO)
+        .filter(WorkItem.work_item_type == CHANGE_TYPE, _parent_period_filter(period_from, period_to))
+        .all()
+    )
+    analysis_stays: list[dict[str, Any]] = []
+    analysis_groups: dict[tuple[str | None, str], list[int]] = {}
+    for item in analysis_rows:
+        column = _kanban_column(item.fields)
+        if not _is_analysis_column(column):
+            continue
+        changed_at = item.changed_date
+        if changed_at and changed_at.tzinfo is None:
+            changed_at = changed_at.replace(tzinfo=UTC)
+        days = max(0, (now - changed_at).days) if changed_at else 0
+        board_id = _board_key(item.board_id, item.area_path)
+        board_name = _board_display_name(item.board_id, item.area_path, board_by_id)
+        key = (board_id, board_name)
+        analysis_groups.setdefault(key, []).append(days)
+        analysis_stays.append(
+            {
+                "board_id": board_id,
+                "board_name": board_name,
+                "item_id": item.id,
+                "title": item.title,
+                "state": item.state,
+                "column": column or "Анализ",
+                "area_path": item.area_path,
+                "changed_at": changed_at,
+                "days_in_analysis": days,
+            }
+        )
+    analysis_by_board = [
+        {
+            "board_id": board_id,
+            "board_name": board_name,
+            "count": len(days),
+            "avg_days": round(sum(days) / len(days), 1) if days else 0,
+            "max_days": max(days) if days else 0,
+        }
+        for (board_id, board_name), days in analysis_groups.items()
+    ]
+    analysis_by_board.sort(key=lambda row: (row["avg_days"], row["count"]), reverse=True)
+    analysis_stays.sort(key=lambda row: (row["days_in_analysis"], row["board_name"]), reverse=True)
+
+    parent_context = {row.id: row for row in analysis_rows}
+    requirement_rework_rows: list[WorkItem] = []
+    if parent_ids:
+        requirement_rework_rows = (
+            db.query(WorkItem)
+            .options(_REWORK_REQ_LO)
+            .filter(WorkItem.work_item_type == REQUIREMENT_TYPE, WorkItem.parent_id.in_(parent_ids))
+            .all()
+        )
+    requirement_reworks: list[dict[str, Any]] = []
+    requirement_rework_groups: dict[tuple[str | None, str], int] = {}
+    for req in requirement_rework_rows:
+        column = _kanban_column(req.fields)
+        if not _is_development_column(column):
+            continue
+        parent = parent_context.get(req.parent_id) if req.parent_id else None
+        area_path = parent.area_path if parent else None
+        board_id = _board_key(parent.board_id if parent else None, area_path)
+        board_name = _board_display_name(parent.board_id if parent else None, area_path, board_by_id)
+        key = (board_id, board_name)
+        requirement_rework_groups[key] = requirement_rework_groups.get(key, 0) + 1
+        changed_at = req.changed_date
+        if changed_at and changed_at.tzinfo is None:
+            changed_at = changed_at.replace(tzinfo=UTC)
+        requirement_reworks.append(
+            {
+                "board_id": board_id,
+                "board_name": board_name,
+                "item_id": req.id,
+                "parent_id": req.parent_id,
+                "title": req.title,
+                "state": req.state,
+                "column": column or "Development",
+                "area_path": area_path,
+                "changed_at": changed_at,
+            }
+        )
+    requirement_reworks_by_board = [
+        {"board_id": board_id, "board_name": board_name, "count": count}
+        for (board_id, board_name), count in requirement_rework_groups.items()
+    ]
+    requirement_reworks_by_board.sort(key=lambda row: row["count"], reverse=True)
+    requirement_reworks.sort(key=lambda row: (row["board_name"], row["item_id"]))
+
     # Релизы берём прямо из витрины (не перезапрашиваем WorkItem ещё раз).
     seen_releases: set[str] = set()
     releases: list[dict[str, Any]] = []
@@ -409,6 +533,10 @@ def load_metrics_dashboard(
         ],
         "releases": releases,
         "shipments": shipments,
+        "analysis_stays": analysis_stays,
+        "analysis_by_board": analysis_by_board,
+        "requirement_reworks": requirement_reworks,
+        "requirement_reworks_by_board": requirement_reworks_by_board,
         "totals": {
             "streams": len(boards_rows),
             "zni_count": zni_count,

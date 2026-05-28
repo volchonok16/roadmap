@@ -6,6 +6,8 @@ import MetricsDashboardGrid from './MetricsDashboardGrid'
 import MetricsChartTypePicker from './MetricsChartTypePicker'
 import MetricsReleaseChart from './MetricsReleaseChart'
 import MetricsProgressChart from './MetricsProgressChart'
+import MetricsAnalysisStayChart from './MetricsAnalysisStayChart'
+import MetricsReworkChart from './MetricsReworkChart'
 import { readMetricsChartType, writeMetricsChartType, type MetricsChartType } from './metricsChartType'
 import { readMetricsGridLayout, writeMetricsGridLayout, type MetricsGridLayoutItem } from './metricsDashboardLayout'
 import {
@@ -15,10 +17,16 @@ import {
 } from './metricsUserSettings'
 import { readMetricsStreamBoardId, writeMetricsStreamBoardId } from './metricsBoard'
 import {
+  analysisBoardSummaryForBoard,
+  analysisStaysForBoard,
   buildHistogramFromShipments,
   buildReleaseProgressPoints,
+  requirementReworkSummaryForBoard,
+  requirementReworksForBoard,
   shipmentsForBoard,
+  type MetricsAnalysisStay,
   type MetricsDashboard,
+  type MetricsRequirementRework,
 } from './metricsDashboard'
 import { defaultMetricWidgets, type MetricWidgetId } from './metricsWidgets'
 import './App.css'
@@ -45,6 +53,71 @@ function readInitialMetricsBoardId(boards: MetricsDashboard['boards']) {
 function formatMetricValue(value: number | null) {
   if (value === null) return '—'
   return value.toLocaleString('ru-RU')
+}
+
+function csvCell(value: string | number | null | undefined) {
+  const text = value == null ? '' : String(value)
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function downloadAnalysisCsv(rows: MetricsAnalysisStay[]) {
+  const header = ['board', 'item_id', 'title', 'state', 'column', 'days_in_analysis', 'changed_at', 'area_path']
+  const lines = [
+    header.map(csvCell).join(';'),
+    ...rows.map((row) =>
+      [
+        row.boardName,
+        row.itemId,
+        row.title,
+        row.state,
+        row.column,
+        row.daysInAnalysis,
+        row.changedAt,
+        row.areaPath,
+      ]
+        .map(csvCell)
+        .join(';'),
+    ),
+  ]
+  const blob = new Blob([`\ufeff${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'analysis-stay-by-board.csv'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+function downloadReworkCsv(rows: MetricsRequirementRework[]) {
+  const header = ['board', 'requirement_id', 'parent_zni_id', 'title', 'state', 'column', 'changed_at', 'area_path']
+  const lines = [
+    header.map(csvCell).join(';'),
+    ...rows.map((row) =>
+      [
+        row.boardName,
+        row.itemId,
+        row.parentId,
+        row.title,
+        row.state,
+        row.column,
+        row.changedAt,
+        row.areaPath,
+      ]
+        .map(csvCell)
+        .join(';'),
+    ),
+  ]
+  const blob = new Blob([`\ufeff${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'requirements-returned-to-develop.csv'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 const widgetMeta = Object.fromEntries(defaultMetricWidgets.map((widget) => [widget.id, widget])) as Record<
@@ -92,6 +165,26 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
   const releaseProgressPoints = useMemo(
     () => buildReleaseProgressPoints(streamShipments, dashboard?.releases ?? [], { maxBars: 20 }),
     [streamShipments, dashboard?.releases],
+  )
+
+  const analysisStayRows = useMemo(
+    () => analysisStaysForBoard(dashboard?.analysisStays ?? [], streamBoardId || null, boards),
+    [dashboard?.analysisStays, streamBoardId, boards],
+  )
+
+  const analysisBoardRows = useMemo(
+    () => analysisBoardSummaryForBoard(dashboard?.analysisByBoard ?? [], streamBoardId || null, boards),
+    [dashboard?.analysisByBoard, streamBoardId, boards],
+  )
+
+  const reworkRows = useMemo(
+    () => requirementReworksForBoard(dashboard?.requirementReworks ?? [], streamBoardId || null, boards),
+    [dashboard?.requirementReworks, streamBoardId, boards],
+  )
+
+  const reworkBoardRows = useMemo(
+    () => requirementReworkSummaryForBoard(dashboard?.requirementReworksByBoard ?? [], streamBoardId || null, boards),
+    [dashboard?.requirementReworksByBoard, streamBoardId, boards],
   )
 
   const loadMetrics = useCallback(async (rebuildMart = false) => {
@@ -214,6 +307,8 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
     'streams-count': dashboard?.totals.streams ?? null,
     'release-shipment': shippedTotal,
     'release-progress': releaseProgressPoints.length,
+    'analysis-stay': analysisStayRows.length,
+    'test-rework': reworkRows.length,
   }
 
   const streamBoardPicker = (
@@ -259,6 +354,70 @@ export default function MetricsScreen({ onLogout }: MetricsScreenProps) {
               streamBoardId
                 ? 'Нет данных о прогрессе по этой доске'
                 : 'Нет данных в витрине'
+            }
+          />
+        </div>
+      )
+    }
+    if (kind === 'analysis-chart') {
+      const avg =
+        analysisStayRows.length > 0
+          ? Math.round((analysisStayRows.reduce((acc, row) => acc + row.daysInAnalysis, 0) / analysisStayRows.length) * 10) / 10
+          : 0
+      return (
+        <div className="metrics-widget-body metrics-widget-body-chart">
+          <p className="metrics-widget-chart-summary metrics-widget-no-drag">
+            {loading
+              ? '…'
+              : `${streamBoardName}: ${analysisStayRows.length.toLocaleString('ru-RU')} ЗНИ в анализе · среднее ${avg.toLocaleString('ru-RU')} дн.`}
+          </p>
+          <div className="metrics-widget-actions metrics-widget-no-drag">
+            <button
+              type="button"
+              className="metrics-widget-export"
+              disabled={loading || analysisStayRows.length === 0}
+              onClick={() => downloadAnalysisCsv(analysisStayRows)}
+            >
+              Выгрузить CSV
+            </button>
+          </div>
+          <MetricsAnalysisStayChart
+            rows={analysisBoardRows}
+            loading={loading}
+            emptyLabel={
+              streamBoardId
+                ? 'На этой доске нет ЗНИ в колонках анализа'
+                : 'Нет ЗНИ в колонках анализа'
+            }
+          />
+        </div>
+      )
+    }
+    if (kind === 'rework-chart') {
+      return (
+        <div className="metrics-widget-body metrics-widget-body-chart">
+          <p className="metrics-widget-chart-summary metrics-widget-no-drag">
+            {loading
+              ? '…'
+              : `${streamBoardName}: ${reworkRows.length.toLocaleString('ru-RU')} требований сейчас в Develop`}
+          </p>
+          <div className="metrics-widget-actions metrics-widget-no-drag">
+            <button
+              type="button"
+              className="metrics-widget-export"
+              disabled={loading || reworkRows.length === 0}
+              onClick={() => downloadReworkCsv(reworkRows)}
+            >
+              Выгрузить CSV
+            </button>
+          </div>
+          <MetricsReworkChart
+            rows={reworkBoardRows}
+            loading={loading}
+            emptyLabel={
+              streamBoardId
+                ? 'На этой доске нет требований в Develop'
+                : 'Нет требований в Develop'
             }
           />
         </div>
