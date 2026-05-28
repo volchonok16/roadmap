@@ -858,12 +858,16 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   const roadmapAbortRef = useRef<AbortController | null>(null)
   const roadmapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const roadmapMountedRef = useRef(false)
+  // Монотонный счётчик: каждый новый запрос увеличивает его.
+  // .then/.catch/.finally сравнивают свою копию с текущей — устаревшие ответы игнорируются.
+  const roadmapGenRef = useRef(0)
   // Инкремент принудительно перезапускает loadRoadmap (после синка / push сроков)
   const [roadmapRefreshToken, setRoadmapRefreshToken] = useState(0)
   const triggerRoadmapLoad = useCallback(() => setRoadmapRefreshToken((n) => n + 1), [])
 
   const loadRoadmap = useCallback(
     (signal: AbortSignal) => {
+      const gen = ++roadmapGenRef.current
       setLoading(true)
       setError(null)
       const params = new URLSearchParams({ from, to })
@@ -871,6 +875,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
       for (const id of selectedBoardIds) params.append('board_id', id)
       getJson<RoadmapResponse>(`/api/roadmap?${params}`, { signal })
         .then((roadmap) => {
+          if (gen !== roadmapGenRef.current) return
           setData({ ...roadmap, items: normalizeRoadmapItems(roadmap.items ?? []) })
           if (roadmap.boards.length) {
             setBoards((prev) => {
@@ -881,10 +886,14 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
           }
         })
         .catch((err: unknown) => {
+          // AbortError — запрос отменён намеренно, не показываем ошибку
           if (err instanceof Error && err.name === 'AbortError') return
+          if (gen !== roadmapGenRef.current) return
           setError(err instanceof Error ? err.message : 'Не удалось загрузить roadmap')
         })
         .finally(() => {
+          // Не сбрасываем loading если уже запущен более новый запрос
+          if (gen !== roadmapGenRef.current) return
           setLoading(false)
         })
     },

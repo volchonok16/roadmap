@@ -79,6 +79,8 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   try {
     return await fetch(`${apiBase}${path}`, { ...init, headers })
   } catch (cause) {
+    // AbortError нельзя оборачивать — иначе caller не сможет отличить отмену от сетевой ошибки.
+    if (cause instanceof Error && cause.name === 'AbortError') throw cause
     throw formatFetchError(path, cause)
   }
 }
