@@ -848,11 +848,15 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
 
   useEffect(() => {
     if (!boards.length || pinAppliedRef.current) return
-    const initial = readInitialSelectedBoardIds()
-    if (initial.length && initial.every((id) => boards.some((board) => board.id === id))) {
-      setSelectedBoardIds(initial)
-    }
     pinAppliedRef.current = true
+    const initial = readInitialSelectedBoardIds()
+    if (!initial.length) return
+    if (!initial.every((id) => boards.some((board) => board.id === id))) return
+    setSelectedBoardIds((prev) => {
+      // Если содержимое совпадает — возвращаем ту же ссылку, чтобы не пересоздавать loadRoadmap
+      if (prev.length === initial.length && initial.every((id) => prev.includes(id))) return prev
+      return initial
+    })
   }, [boards])
 
   const roadmapAbortRef = useRef<AbortController | null>(null)
