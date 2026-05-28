@@ -843,7 +843,7 @@ function RoadmapScreen({ onLogout }: RoadmapScreenProps) {
   }, [])
 
   useEffect(() => {
-    void loadBoards(true)
+    void loadBoards(false)
   }, [loadBoards])
 
   useEffect(() => {

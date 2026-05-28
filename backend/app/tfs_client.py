@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 import re
+import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime
 from typing import Any
@@ -28,6 +30,8 @@ BOARDS_DIRECTORY_PROVIDER = "ms.vss-work-web.boards-hub-directory-data-provider"
 EMBEDDED_BOARD_RE = re.compile(
     r'"artifactId":"(?P<id>[0-9a-fA-F-]{36})"[^}]*?"artifactName":"(?P<name>(?:\\.|[^"\\])*)"',
 )
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_FIELD_ALIASES = {
     "-3": "System.Id",
@@ -751,9 +755,22 @@ class TfsClient:
             body: dict[str, Any] = {"ids": chunk, "$expand": "All", "errorPolicy": 2}
             if not settings.tfs_fetch_all_fields:
                 body["fields"] = fields
+            started = time.monotonic()
+            logger.info(
+                "tfs_workitems_batch_request stage=changes offset=%s total=%s chunk=%s",
+                offset,
+                len(ids),
+                len(chunk),
+            )
             response = await self._post_with_api_versions(
                 f"/{self.project}/_apis/wit/workItemsBatch",
                 json=body,
+            )
+            logger.info(
+                "tfs_workitems_batch_response stage=changes offset=%s status=%s duration_s=%.2f",
+                offset,
+                response.status_code,
+                time.monotonic() - started,
             )
             response.raise_for_status()
             batch = response.json()
@@ -788,9 +805,22 @@ class TfsClient:
         for offset in range(0, len(missing_ids), settings.tfs_batch_size):
             chunk = missing_ids[offset : offset + settings.tfs_batch_size]
             body: dict[str, Any] = {"ids": chunk, "fields": scheduling_fields, "errorPolicy": 2}
+            started = time.monotonic()
+            logger.info(
+                "tfs_workitems_batch_request stage=enrich offset=%s total=%s chunk=%s",
+                offset,
+                len(missing_ids),
+                len(chunk),
+            )
             response = await self._post_with_api_versions(
                 f"/{self.project}/_apis/wit/workItemsBatch",
                 json=body,
+            )
+            logger.info(
+                "tfs_workitems_batch_response stage=enrich offset=%s status=%s duration_s=%.2f",
+                offset,
+                response.status_code,
+                time.monotonic() - started,
             )
             response.raise_for_status()
             batch = response.json()
@@ -889,12 +919,27 @@ class TfsClient:
     async def _post_with_api_versions(self, path: str, *, json: dict[str, Any]) -> httpx.Response:
         last_response: httpx.Response | None = None
         for api_version in _api_version_candidates():
-            response = await self.client.post(path, params={"api-version": api_version}, json=json)
-            last_response = response
-            if response.status_code == 200:
+            for attempt in range(1, 4):
+                try:
+                    response = await self.client.post(path, params={"api-version": api_version}, json=json)
+                except (httpx.TimeoutException, httpx.RequestError) as exc:
+                    logger.warning(
+                        "tfs_post_retry path=%s api_version=%s attempt=%s error=%s",
+                        path,
+                        api_version,
+                        attempt,
+                        str(exc),
+                    )
+                    if attempt >= 3:
+                        raise
+                    await asyncio.sleep(min(1.0 * attempt, 3.0))
+                    continue
+                last_response = response
+                if response.status_code == 200:
+                    return response
+                if response.status_code == 400 and "out of range" in response.text.lower():
+                    break
                 return response
-            if response.status_code == 400 and "out of range" in response.text.lower():
-                continue
         if last_response is not None:
             return last_response
         raise httpx.HTTPError(f"Request failed without response for {path}")
