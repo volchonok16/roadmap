@@ -37,11 +37,23 @@ _PERF_INDEXES = [
     ),
 ]
 
+# Новые колонки, добавленные после первоначального создания таблиц.
+# CREATE TABLE не добавляет колонки в уже существующие таблицы — делаем ALTER.
+_COLUMN_MIGRATIONS = [
+    "ALTER TABLE metrics_shipments ADD COLUMN IF NOT EXISTS req_total INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE metrics_shipments ADD COLUMN IF NOT EXISTS error_count INTEGER NOT NULL DEFAULT 0",
+]
+
 
 def ensure_perf_indexes() -> None:
     """Создаёт составные индексы вне транзакции (CONCURRENTLY). Безопасно повторять."""
     with engine.connect() as conn:
         conn.execution_options(isolation_level="AUTOCOMMIT")
+        for ddl in _COLUMN_MIGRATIONS:
+            try:
+                conn.execute(text(ddl))
+            except Exception as exc:
+                logger.warning("column_migration_skipped ddl=%r reason=%s", ddl, exc)
         for name, ddl in _PERF_INDEXES:
             try:
                 conn.execute(text(ddl))
