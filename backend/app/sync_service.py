@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -25,6 +27,8 @@ from app.tfs_client import (
     parse_tfs_date,
     parse_tfs_datetime,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def user_start_date_from_fields(fields: dict[str, Any]) -> date | None:
@@ -468,6 +472,7 @@ async def run_sync(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> SyncRun:
+    started_at_monotonic = time.monotonic()
     period_mode = mode == "period" and date_from is not None and date_to is not None
     if sync_run is None:
         sync_run = SyncRun(status="running", message="Запуск…")
@@ -476,6 +481,14 @@ async def run_sync(
         db.refresh(sync_run)
 
     sync_run_id = sync_run.id
+    logger.info(
+        "sync_run_started id=%s mode=%s period=%s from=%s to=%s",
+        sync_run_id,
+        mode,
+        period_mode,
+        date_from,
+        date_to,
+    )
 
     def open_db() -> tuple[Session, SyncRun]:
         session = SessionLocal()
@@ -516,6 +529,7 @@ async def run_sync(
         touch_sync_progress(db, sync_run, "Поиск ЗНИ в TFS (WIQL)…")
         close_db_session(db)
         db = None  # type: ignore[assignment]
+        wiql_started = time.monotonic()
         if period_mode:
             change_ids = await client.get_change_request_ids(
                 date_from=date_from,
@@ -560,6 +574,12 @@ async def run_sync(
                 db = None  # type: ignore[assignment]
                 all_ids = await client.get_change_request_ids(limit_results=False)
                 change_ids = list(dict.fromkeys([*change_ids, *all_ids]))
+        logger.info(
+            "sync_run_wiql_done id=%s count=%s duration_s=%.2f",
+            sync_run_id,
+            len(change_ids),
+            time.monotonic() - wiql_started,
+        )
         wiql_cap = settings.tfs_wiql_max_results
         cap_note = f" (лимит {wiql_cap})" if not period_mode and len(change_ids) >= wiql_cap else ""
         db, sync_run = open_db()
@@ -577,8 +597,21 @@ async def run_sync(
             session, row = open_db()
             touch_sync_progress(session, row, f"Загрузка карточек ЗНИ: {processed}/{total}")
             close_db_session(session)
+            logger.info(
+                "sync_run_changes_progress id=%s processed=%s total=%s",
+                sync_run_id,
+                processed,
+                total,
+            )
 
+        batch_started = time.monotonic()
         change_items = await client.get_work_items_batch(change_ids, on_progress=report_change_load)
+        logger.info(
+            "sync_run_changes_loaded id=%s count=%s duration_s=%.2f",
+            sync_run_id,
+            len(change_items),
+            time.monotonic() - batch_started,
+        )
         last_enriched = 0
 
         def report_enrich(processed: int, total: int) -> None:
@@ -589,8 +622,20 @@ async def run_sync(
             session, row = open_db()
             touch_sync_progress(session, row, f"Дозагрузка дат ЗНИ: {processed}/{total}")
             close_db_session(session)
+            logger.info(
+                "sync_run_enrich_progress id=%s processed=%s total=%s",
+                sync_run_id,
+                processed,
+                total,
+            )
 
+        enrich_started = time.monotonic()
         await client.enrich_scheduling_fields(change_items, on_progress=report_enrich)
+        logger.info(
+            "sync_run_enrich_done id=%s duration_s=%.2f",
+            sync_run_id,
+            time.monotonic() - enrich_started,
+        )
         db, sync_run = open_db()
         save_raw_payload(db, sync_run_id, "change_requests_batch", {"ids": change_ids, "items": change_items})
 
@@ -712,18 +757,33 @@ async def run_sync(
             f"{mode_label}: {board_info}, ЗНИ: {len(change_payloads)}, "
             f"связанные элементы: {saved_linked_items}, требования: {saved_requirements}"
         )
+        logger.info(
+            "sync_run_success id=%s zni=%s linked=%s requirements=%s duration_s=%.2f",
+            sync_run_id,
+            len(change_payloads),
+            saved_linked_items,
+            saved_requirements,
+            time.monotonic() - started_at_monotonic,
+        )
     except httpx.HTTPStatusError as exc:
         if db is None:
             db, sync_run = open_db()
         db.rollback()
         sync_run.status = "failed"
         sync_run.message = friendly_http_error(exc)
+        logger.exception(
+            "sync_run_http_failed id=%s status=%s url=%s",
+            sync_run_id,
+            exc.response.status_code,
+            str(exc.request.url) if exc.request else "",
+        )
     except Exception as exc:
         if db is None:
             db, sync_run = open_db()
         db.rollback()
         sync_run.status = "failed"
         sync_run.message = str(exc)
+        logger.exception("sync_run_failed id=%s", sync_run_id)
     finally:
         await client.close()
         if db is None:

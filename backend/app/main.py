@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
@@ -64,6 +65,8 @@ from app.sync_service import fail_stale_running_syncs, replace_board_catalog, ru
 from app.tfs_auth import TfsAuth, build_tfs_auth
 from app.tfs_client import TfsClient
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="TFS Roadmap API")
 
 app.add_middleware(
@@ -113,6 +116,7 @@ async def run_sync_background(
             sync_run.finished_at = datetime.now(UTC)
             db.add(sync_run)
             db.commit()
+        logger.exception("sync_run_background_failed id=%s", sync_run_id)
     finally:
         db.close()
 
